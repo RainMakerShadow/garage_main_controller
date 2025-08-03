@@ -65,6 +65,10 @@ const char *wifi_modes[] = {"Station", "Access point"};
 uint8_t timeHours;
 uint8_t timeMinutes;
 uint8_t timeSeconds;
+uint8_t day;
+uint8_t month;
+uint8_t year;
+
 /*display mui*/
 
 uint8_t num_value = 0;
@@ -75,6 +79,7 @@ uint16_t animal_idx = 0;
   list of animal names
 */
 unsigned long key_timer;
+unsigned long menu_show_timer;
 const char *animals[] = {"Bird", "Bison", "Cat", "Crow", "Dog", "Elephant", "Fish", "Gnu", "Horse", "Koala", "Lion", "Mouse", "Owl", "Rabbit", "Spider", "Turtle", "Zebra"};
 
 uint16_t animal_name_list_get_cnt(void *data)
@@ -131,9 +136,13 @@ muif_t muif_list[] = {
     MUIF_RO("GP", mui_u8g2_goto_data),
     MUIF_BUTTON("GC", mui_u8g2_goto_form_w1_pi),
 
-    MUIF_U8G2_U8_MIN_MAX("HC", &timeHours, 0, 24, mui_u8g2_u8_min_max_wm_mse_pi),
-    MUIF_U8G2_U8_MIN_MAX("MC", &timeMinutes, 0, 60, mui_u8g2_u8_min_max_wm_mse_pi),
-    MUIF_U8G2_U8_MIN_MAX("SC", &timeSeconds, 0, 60, mui_u8g2_u8_min_max_wm_mse_pi),
+    MUIF_U8G2_U8_MIN_MAX("HC", &timeHours, 0, 23, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("MC", &timeMinutes, 0, 59, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("SC", &timeSeconds, 0, 59, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("YD", &year, 0, 99, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("MD", &month, 1, 12, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("DD", &day, 1, 31, mui_u8g2_u8_min_max_wm_mud_pi),
+
     MUIF_U8G2_U8_MIN_MAX("NV", &num_value, 0, 99, mui_u8g2_u8_min_max_wm_mse_pi),
     MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, mui_u8g2_u8_bar_wm_mse_pf),
     MUIF_U8G2_U16_LIST("NA", &animal_idx, NULL, animal_name_list_get_str, animal_name_list_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
@@ -152,46 +161,68 @@ fds_t fds_data[] =
                 MUI_STYLE(0)
                     MUI_XY("HR", 0, 11)
                         MUI_DATA("GP",
-                                 MUI_10 "Enter Data|" MUI_12 "Show Data|" MUI_2 "Clock")
+                                 MUI_10 "Enter Data|" MUI_12 "Show Data|" MUI_20 "Clock Settings")
                             MUI_XYA("GC", 5, 24, 0)
                                 MUI_XYA("GC", 5, 36, 1)
                                     MUI_XYA("GC", 5, 48, 2)
-
-                                        MUI_FORM(10)
-                                            MUI_STYLE(1)
-                                                MUI_LABEL(5, 8, "Enter Data")
-                                                    MUI_XY("HR", 0, 11)
-                                                        MUI_STYLE(0)
-                                                            MUI_LABEL(5, 23, "Num:")
-                                                                MUI_LABEL(5, 35, "Bar:")
-                                                                    MUI_LABEL(5, 47, "Animal:")
-                                                                        MUI_XY("NV", 50, 23)
-                                                                            MUI_XY("NB", 50, 35)
-                                                                                MUI_XY("NA", 50, 47)
-                                                                                    MUI_XYAT("GO", 114, 60, 1, " Ok ")
-
-                                                                                        MUI_FORM(12)
-                                                                                            MUI_STYLE(1)
-                                                                                                MUI_LABEL(5, 8, "Show Data")
-                                                                                                    MUI_XY("HR", 0, 11)
-                                                                                                        MUI_STYLE(0)
-                                                                                                            MUI_XY("SH", 0, 23)
-                                                                                                                MUI_XYAT("GO", 114, 60, 1, " Ok ")
-
-                                                                                                                    MUI_FORM(2)
-                                                                                                                        MUI_STYLE(1)
-                                                                                                                            MUI_LABEL(5, 8, "Clock settings")
-                                                                                                                                MUI_XY("HR", 0, 11)
-                                                                                                                                    MUI_STYLE(0)
-                                                                                                                                        MUI_LABEL(5, 23, "Hours:")
-                                                                                                                                            MUI_LABEL(5, 35, "Minutes:")
-                                                                                                                                                MUI_LABEL(5, 47, "Seconds:")
-                                                                                                                                                    MUI_XY("HC", 50, 23)
-                                                                                                                                                        MUI_XY("MC", 50, 35)
-                                                                                                                                                            MUI_XY("SC", 50, 47)
-                                                                                                                                                                MUI_XYAT("GO", 114, 60, 1, " Ok ")
-
-    ;
+    //
+    MUI_FORM(10)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Enter Data")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_LABEL(5, 23, "Num:")
+                            MUI_LABEL(5, 35, "Bar:")
+                                MUI_LABEL(5, 47, "Animal:")
+                                    MUI_XY("NV", 50, 23)
+                                        MUI_XY("NB", 50, 35)
+                                            MUI_XY("NA", 50, 47)
+                                                MUI_XYAT("GO", 114, 60, 1, " Ok ")
+    //
+    MUI_FORM(12)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Show Data")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XY("SH", 0, 23)
+                            MUI_XYAT("GO", 114, 60, 1, " Ok ")
+    //
+    MUI_FORM(20)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Clock settings")
+                MUI_STYLE(0)
+                    MUI_XY("HR", 0, 11)
+                        MUI_DATA("GP",
+                                 MUI_21 "Set clock|" MUI_22 "Set date")
+                            MUI_XYA("GC", 5, 24, 0)
+                                MUI_XYA("GC", 5, 36, 1)
+    //
+    MUI_FORM(21)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Clock settings")
+                MUI_STYLE(0)
+                    MUI_XY("HR", 0, 11)
+                        MUI_LABEL(5, 23, "Hours:")
+                            MUI_LABEL(5, 35, "Minutes:")
+                                MUI_LABEL(5, 47, "Seconds:")
+                                    MUI_XY("HC", 50, 23)
+                                        MUI_XY("MC", 50, 35)
+                                            MUI_XY("SC", 50, 47)
+                                                MUI_XYAT("G0", 114, 60, 1, " Ok ")
+                                                    MUI_GOTO(50, 20, 20, "OK")
+    //
+    MUI_FORM(22)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Date settings")
+                MUI_STYLE(0)
+                    MUI_XY("HR", 0, 11)
+                        MUI_LABEL(5, 23, "Day:")
+                            MUI_LABEL(5, 35, "Month:")
+                                MUI_LABEL(5, 47, "Year:")
+                                    MUI_XY("DD", 50, 23)
+                                        MUI_XY("MD", 50, 35)
+                                            MUI_XY("YD", 50, 47)
+                                                MUI_XYAT("G0", 114, 60, 1, " Ok ");
 /*-------------------------*/
 
 unsigned long timerFreez;
@@ -828,8 +859,13 @@ void loop(void)
         mui.draw();
       } while (u8g2.nextPage());
       is_redraw = 0; /* clear the redraw flag */
+      menu_show_timer = millis();
     }
-
+    if (millis() - menu_show_timer > 30000)
+    { // exit menu if timeout 30 sec
+      mui.leaveForm();
+      return;
+    }
     /* handle events */
     // switch (u8g2.getMenuEvent())
     // {
@@ -860,27 +896,47 @@ void loop(void)
       }
       if (!PCF_keyboard.read(7))
       { // Ok/select
-        mui.sendSelect();
-        is_redraw = 1;
+        if (mui.getCurrentFormId() == 21 && mui.getCurrentCursorFocusPosition() == 3)
+        { // Set time
+          rtc.adjust(DateTime((String(now.year()).substring(0, 2) + String(year)).toInt(), month, day, timeHours, timeMinutes, timeSeconds));
+          mui.gotoForm(20, 0);
+          is_redraw = 1;
+          // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
+        }
+        else if (mui.getCurrentFormId() == 22 && mui.getCurrentCursorFocusPosition() == 3)
+        {
+          rtc.adjust(DateTime((String(now.year()).substring(0, 2) + String(year)).toInt(), month, day, timeHours, timeMinutes, timeSeconds));
+          mui.gotoForm(20, 0);
+          is_redraw = 1;
+        }
+        else
+        {
+          mui.sendSelect();
+          is_redraw = 1;
+        }
       }
       if (!PCF_keyboard.read(1))
       { // Home
         if (mui.getCurrentFormId() == 1)
-        {
+        { // Exit from menu
           mui.leaveForm();
           return;
         }
         else
-        {
-          mui.gotoForm(1, 0);
+        { // start menu
+          if (mui.getCurrentFormId() > 20 && mui.getCurrentFormId() < 30)
+          {
+            mui.gotoForm(20, 0);
+          }
+          else
+          {
+            mui.gotoForm(1, 0);
+          }
+
           is_redraw = 1;
         }
       }
       timerFreez = millis();
-    }
-    if (mui.getCurrentFormId() == 2)
-    {
-      
     }
   }
   else
@@ -949,9 +1005,15 @@ void loop(void)
   }
 
   now = rtc.now();
-  timeHours = now.hour();
-  timeMinutes = now.minute();
-  timeSeconds = now.second();
+  if (!mui.isFormActive())
+  {
+    timeHours = now.hour();
+    timeMinutes = now.minute();
+    timeSeconds = now.second();
+    day = now.day();
+    month = now.month();
+    year = (uint8_t)String(now.year()).substring(2).toInt();
+  }
 
   if (mySwitch.available())
   {
