@@ -1,0 +1,13 @@
+{
+    "ssid": "Umbrella Corporation",
+    "wifi_pass": "21121985",
+    "mqtt_server": "31.128.178.88",
+    "mqtt_port": 1883,
+    "mqtt_user": "admin",
+    "mqtt_pass": "Utoyfghis0979677725",
+    "login": "admin",
+    "pass": "admin",
+    "clientId": "garage_main_controller",
+    "outTopic": "",
+    "wifi_mode": 1
+}

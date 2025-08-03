@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Basic settings</title>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+
+    <body onload="updateData()">
+        <div class="content">
+            <nav id="this-tab-set" class="radio-tabs">
+                <input id="tab-1" type="radio" name="tabs" checked />
+                <label for="tab-1">WIFI</label>
+
+                <input id="tab-2" type="radio" name="tabs" />
+                <label for="tab-2">MQTT</label>
+
+                <input id="tab-3" type="radio" name="tabs" />
+                <label for="tab-3">User</label>
+
+                <input id="tab-4" type="radio" name="tabs" />
+                <label for="tab-4">NTP</label>
+
+                <input id="tab-5" type="radio" name="tabs" />
+                <label for="tab-5">Other</label>
+
+                <br />
+
+                <div class="tab-1-display display">
+                    <div class="content">
+                        <div class="wrapper">
+                            <label for="network_list">SSID</label>
+                            <select name="Networks" id="network_list"></select>
+                            <label for="wifi_pass">Password</label>
+                            <input id="wifi_pass" type="password" />
+                            <label for="wifi_mode">WiFi mode</label>
+                            <select id="wifi_mode" name="wifi_modes"></select>
+                            <button id="save_wifi_set" class="btn">Save</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="tab-2-display display">
+                    <div class="content">
+                        <div class="wrapper">
+                            <label for="mqtt_server_address">Server</label>
+                            <input id="mqtt_server_address" type="text" />
+                            <label for="mqtt_server_port">Port</label>
+                            <input
+                                id="mqtt_server_port"
+                                type="number"
+                                max="9999"
+                            />
+                            <label for="mqtt_user">User</label>
+                            <input id="mqtt_user" type="text" />
+                            <label for="mqtt_pass">Password</label>
+                            <input id="mqtt_pass" type="password" />
+                            <label for="client_id">Client ID</label>
+                            <input id="client_id" type="text" />
+                            <button id="save_mqtt_set" class="btn">Save</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="tab-3-display display">
+                    <div class="content">
+                        <div class="wrapper">
+                            <label for="login">Login</label>
+                            <input id="login" type="text" />
+                            <label for="pass">Password</label>
+                            <input id="pass" type="password" />
+                            <button id="save_user_set" class="btn">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+        </div>
+        <script src="script.js"></script>
+    </body>
+</html>

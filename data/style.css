@@ -1,0 +1,230 @@
+/* Set the default switch box rendering context. */
+.radio {
+    position: relative;
+    float: left;
+    display: block;
+}
+
+/* Set a specific box rendering context, positioning and other details.*/
+#this-tab-set {
+    margin-top: 10px;
+    font-size: 16px;
+    color: #555;
+    font-family: helvetica;
+    position: absolute; /**/
+    box-shadow: 0px 0.5em 1.2em -0.2em rgba(0, 0, 0, 0.4),
+        0 0.6em 0.5em -0.5em rgba(0, 0, 0, 1);
+}
+
+/* Custom Default Label Styles */
+#this-tab-set > label {
+    position: relative;
+    float: left;
+    background-color: rgb(100, 100, 100);
+    color: rgba(255, 255, 255, 0.99);
+    padding: 1em;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+#this-tab-set > .display {
+    position: relative;
+    float: left;
+    background-color: rgb(100, 100, 100);
+    color: rgba(255, 255, 255, 0.99);
+}
+#this-tab-set > label {
+    background-color: rgb(150, 150, 150);
+    padding-bottom: 0.5em;
+    margin-top: 0em;
+    -webkit-transition: margin 0.25s;
+    z-index: 1;
+}
+#this-tab-set > input:checked + label {
+    background-color: rgb(100, 100, 100);
+    margin-top: -0.75em;
+
+    box-shadow: 0em 0.5em 1em -0.2em rgba(0, 0, 0, 0.5),
+        0em 0.5em 0.5em -0.2em rgba(0, 0, 0, 0.7);
+    z-index: 3;
+}
+#this-tab-set > label:hover {
+    box-shadow: 0em 0.5em 1em -0.2em rgba(0, 0, 0, 0.25),
+        0em 0.5em 0.5em -0.2em rgba(0, 0, 0, 0.3);
+    z-index: 2;
+    margin-top: -0.3em;
+}
+
+#this-tab-set > input:checked + label {
+    background-color: rgb(100, 100, 100);
+}
+#this-tab-set > .display {
+    clear: both;
+    width: 329px; /* somthing to do qith context rendering is causing this prop to be required */ /* the value is the width of the container subtract the padding */
+    /* padding: 1em; */
+    z-index: 3;
+    width: 100%;
+}
+/* Color block for tab animation */
+#this-tab-set > label:after {
+    content: " ";
+    width: 100%;
+    position: absolute;
+    height: 1em;
+    left: 0;
+    bottom: -1em;
+    background-color: inherit;
+    z-index: 0;
+}
+
+/* Round Corners */
+#this-tab-set {
+    border-radius: 0.5em;
+}
+
+#this-tab-set > label:nth-child(2) {
+    border-top-left-radius: inherit;
+}
+#this-tab-set > label:nth-child(10) {
+    border-top-right-radius: inherit;
+}
+#this-tab-set > .display {
+    border-bottom-right-radius: inherit;
+    border-bottom-left-radius: inherit;
+}
+
+/* Hide switch inputs. */
+.radio-tabs > input {
+    position: absolute;
+    visibility: hidden;
+}
+
+/* Set up state switching indicators. */
+.radio-tabs > label {
+    cursor: pointer;
+}
+
+/* Indicator call to action. */
+
+/* Set up Display positioning. */
+.display {
+    position: relative;
+    float: left;
+    padding-top: 1em;
+}
+
+/* Set basic off states. */
+.radio-tabs > .display {
+    position: absolute;
+    visibility: hidden;
+}
+
+/* Set the default state. */
+.radio-tabs > .tab-1-display {
+    position: relative;
+    visibility: visible;
+}
+
+/* State switching interaction. */
+.radio-tabs > #tab-1:checked ~ .tab-1-display {
+    position: relative;
+    visibility: visible;
+}
+.radio-tabs > #tab-1:checked ~ .tab-2-display,
+.radio-tabs > #tab-1:checked ~ .tab-3-display,
+.radio-tabs > #tab-1:checked ~ .tab-4-display,
+.radio-tabs > #tab-1:checked ~ .tab-5-display {
+    position: absolute;
+    visibility: hidden;
+}
+
+.radio-tabs > #tab-2:checked ~ .tab-2-display {
+    position: relative;
+    visibility: visible;
+}
+.radio-tabs > #tab-2:checked ~ .tab-3-display,
+.radio-tabs > #tab-2:checked ~ .tab-4-display,
+.radio-tabs > #tab-2:checked ~ .tab-5-display,
+.radio-tabs > #tab-2:checked ~ .tab-1-display {
+    position: absolute;
+    visibility: hidden;
+}
+
+.radio-tabs > #tab-3:checked ~ .tab-3-display {
+    position: relative;
+    visibility: visible;
+}
+.radio-tabs > #tab-3:checked ~ .tab-2-display,
+.radio-tabs > #tab-3:checked ~ .tab-4-display,
+.radio-tabs > #tab-3:checked ~ .tab-5-display,
+.radio-tabs > #tab-3:checked ~ .tab-1-display {
+    position: absolute;
+    visibility: hidden;
+}
+
+.radio-tabs > #tab-4:checked ~ .tab-4-display {
+    position: relative;
+    visibility: visible;
+}
+.radio-tabs > #tab-4:checked ~ .tab-2-display,
+.radio-tabs > #tab-4:checked ~ .tab-3-display,
+.radio-tabs > #tab-4:checked ~ .tab-5-display,
+.radio-tabs > #tab-4:checked ~ .tab-1-display {
+    position: absolute;
+    visibility: hidden;
+}
+
+.radio-tabs > #tab-5:checked ~ .tab-5-display {
+    position: relative;
+    visibility: visible;
+}
+.radio-tabs > #tab-5:checked ~ .tab-2-display,
+.radio-tabs > #tab-5:checked ~ .tab-4-display,
+.radio-tabs > #tab-5:checked ~ .tab-1-display,
+.radio-tabs > #tab-5:checked ~ .tab-3-display {
+    position: absolute;
+    visibility: hidden;
+}
+.content {
+    max-width: 400px;
+    margin: 0 auto;
+}
+.wrapper {
+    font-size: 1em;
+    padding: 20px;
+    margin: 15px;
+    display: grid;
+    grid-column: 2;
+    border: 2px solid black;
+    border-radius: 5px;
+    background: radial-gradient(
+        ellipse at right top,
+        #596d828f 0%,
+        #e2e5f9 45%,
+        #47484a 100%
+    );
+    box-shadow: 1px 1px 5px white, 4px 4px 5px black;
+}
+
+label {
+    margin-top: 15px;
+}
+input,
+select {
+    border-radius: 5px;
+    padding: 5px;
+    background-color: rgb(207, 222, 249);
+    color: rgb(28, 67, 126);
+}
+
+.btn {
+    margin-top: 30px;
+    border-radius: 5px;
+    padding: 5px;
+    background-color: rgb(100, 100, 100);
+    color: rgb(254, 254, 254);
+}
+.btn:hover {
+    background-color: #e2e5f9;
+    color: rgb(28, 67, 126);
+    cursor: pointer;
+}
