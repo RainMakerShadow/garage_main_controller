@@ -849,22 +849,22 @@ void loop(void)
     if (millis() - timerFreez > 300)
     {
       if (analogRead(33) < 1800)
-      { // Кнопка вниз
+      { // down
         mui.nextField();
         is_redraw = 1;
       }
       if (analogRead(33) > 2000)
-      { // Кнопка вверх
+      { // down
         mui.prevField();
         is_redraw = 1;
       }
       if (!PCF_keyboard.read(7))
-      { // Кнопка OK / выбор
+      { // Ok/select
         mui.sendSelect();
         is_redraw = 1;
       }
       if (!PCF_keyboard.read(1))
-      { // Кнопка домой
+      { // Home
         if (mui.getCurrentFormId() == 1)
         {
           mui.leaveForm();
@@ -877,6 +877,10 @@ void loop(void)
         }
       }
       timerFreez = millis();
+    }
+    if (mui.getCurrentFormId() == 2)
+    {
+      
     }
   }
   else
@@ -937,27 +941,12 @@ void loop(void)
       }
     }
   }
-  // if (!PCF_keyboard.read(5))
-  // { // Кнопка вниз
-  //   mui.nextField();
-  //   is_redraw = true;
-  // }
-  // if (!PCF_keyboard.read(6))
-  // { // Кнопка вверх
-  //   mui.prevField();
-  //   is_redraw = true;
-  // }
   if (!mui.isFormActive() && !PCF_keyboard.read(7))
-  { // Кнопка OK / выбор
+  { // open menu
     mui.gotoForm(1, 0);
     is_redraw = true;
     timerFreez = millis();
   }
-  // if (!PCF_keyboard.read(1))
-  // { // Кнопка домой
-  //   mui.gotoForm(1, 0);
-  //   is_redraw = true;
-  // }
 
   now = rtc.now();
   timeHours = now.hour();
@@ -965,7 +954,7 @@ void loop(void)
   timeSeconds = now.second();
 
   if (mySwitch.available())
-  { // получение кода с брелка
+  {
     Serial.println(mySwitch.getReceivedValue());
     if (mySwitch.getReceivedValue() == 13675425)
     {
@@ -982,7 +971,6 @@ void loop(void)
     // D 13675432
     mySwitch.resetAvailable();
   }
-  //   // generalScreen();
   if (strlen(configJson["mqtt_server"].as<const char *>()) > 0)
   {
     if (!mqttClient.connected())
