@@ -22,10 +22,11 @@ PubSubClient mqttClient(espClient);
 RTC_DS3231 rtc;
 DateTime now;
 StaticJsonDocument<256> configJson;
+StaticJsonDocument<256> configDFPlayer;
 WebServer server(80);
 HTTPUpdateServer httpUpdater;
-PCF8574 PCF_keyboard(0x27);
-PCF8574 PCF_relay(0x26);
+PCF8574 PCFKeyboard(0x27);
+PCF8574 PCFRelay(0x26);
 #if (defined(ARDUINO_AVR_UNO) || defined(ESP8266)) // Using a soft serial port
 #include <SoftwareSerial.h>
 SoftwareSerial softSerial(/*rx =*/4, /*tx =*/5);
@@ -50,10 +51,10 @@ const char *www_realm = "Custom Auth Realm";
 // the Content of the HTML response in case of Unautherized Access Default:empty
 String authFailResponse = "Authentication Failed";
 
-unsigned long lastMsg;
+unsigned long last_msg;
 int timeout_mqtt_reconnect = 3000;
 unsigned long timer;
-unsigned long readJoystikTimer;
+unsigned long read_joystik_timer;
 float temp_inside = 28.7;
 float temp_outside = -12.3;
 float pressure = 46;
@@ -62,15 +63,26 @@ const char *wifi_modes[] = {"Station", "Access point"};
 
 #define joystikLeftRightPin 35
 #define joystikUpDownPin 33
-uint8_t timeHours;
-uint8_t timeMinutes;
-uint8_t timeSeconds;
+
+/*Date & time*/
+uint8_t time_hours;
+uint8_t time_minutes;
+uint8_t time_seconds;
 uint8_t day;
 uint8_t month;
 uint8_t year;
 
-/*display mui*/
+/*DFPlayer*/
+const char *equalizer[] = {"Normal", "Pop", "Rock", "Jazz", "Classic", "Bass"};
+uint8_t last_play_track;
+uint16_t eq_index_set;
+uint8_t volume_set;
+bool random_all_set;
+bool loop_set;
+bool loop_all_set;
+bool reset_dfp;
 
+/*display mui*/
 uint8_t num_value = 0;
 uint8_t bar_value = 0;
 uint16_t animal_idx = 0;
@@ -80,18 +92,26 @@ uint16_t animal_idx = 0;
 */
 unsigned long key_timer;
 unsigned long menu_show_timer;
-const char *animals[] = {"Bird", "Bison", "Cat", "Crow", "Dog", "Elephant", "Fish", "Gnu", "Horse", "Koala", "Lion", "Mouse", "Owl", "Rabbit", "Spider", "Turtle", "Zebra"};
 
-uint16_t animal_name_list_get_cnt(void *data)
+uint16_t menu_get_cnt(void *data)
 {
-  return sizeof(animals) / sizeof(*animals); /* number of animals */
+  return 5; /* number of menu entries */
 }
 
-const char *animal_name_list_get_str(void *data, uint16_t index)
+const char *
+menu_get_str(void *data, uint16_t index)
 {
-  return animals[index];
-}
+  static const char *dfp_menu[] = {
+      MUI_21 "Volume",
+      MUI_22 "EQ",
+      MUI_23 "Loop",
+      MUI_24 "Random",
+      MUI_25 "Reset DFP",
 
+  };
+  return dfp_menu[index];
+}
+uint16_t selection = 0;
 uint8_t mui_hrule(mui_t *ui, uint8_t msg)
 {
   if (msg == MUIF_MSG_DRAW)
@@ -101,30 +121,14 @@ uint8_t mui_hrule(mui_t *ui, uint8_t msg)
   return 0;
 }
 
-uint8_t show_my_data(mui_t *ui, uint8_t msg)
+uint16_t equalizer_get_cnt(void *data)
 {
-  if (msg == MUIF_MSG_DRAW)
-  {
-    u8g2_uint_t x = mui_get_x(ui);
-    u8g2_uint_t y = mui_get_y(ui);
-    u8g2.setCursor(x + 5, y);
-    u8g2.print("Num:");
-    u8g2.setCursor(x + 50, y);
-    u8g2.print(num_value);
+  return sizeof(equalizer) / sizeof(*equalizer); /* number of animals */
+}
 
-    u8g2.setCursor(x + 5, y + 12);
-    u8g2.print("Bar:");
-    u8g2.setCursor(x + 50, y + 12);
-    u8g2.print(bar_value);
-
-    u8g2.setCursor(x + 5, y + 24);
-    u8g2.print("Animal:");
-    u8g2.setCursor(x + 50, y + 24);
-    u8g2.print(animal_idx);
-    u8g2.print("=");
-    u8g2.print(animals[animal_idx]);
-  }
-  return 0;
+const char *equalizer_get_str(void *data, uint16_t index)
+{
+  return equalizer[index];
 }
 
 muif_t muif_list[] = {
@@ -136,19 +140,28 @@ muif_t muif_list[] = {
     MUIF_RO("GP", mui_u8g2_goto_data),
     MUIF_BUTTON("GC", mui_u8g2_goto_form_w1_pi),
 
-    MUIF_U8G2_U8_MIN_MAX("HC", &timeHours, 0, 23, mui_u8g2_u8_min_max_wm_mud_pi),
-    MUIF_U8G2_U8_MIN_MAX("MC", &timeMinutes, 0, 59, mui_u8g2_u8_min_max_wm_mud_pi),
-    MUIF_U8G2_U8_MIN_MAX("SC", &timeSeconds, 0, 59, mui_u8g2_u8_min_max_wm_mud_pi),
+    /*Date & time*/
+    MUIF_U8G2_U8_MIN_MAX("HC", &time_hours, 0, 23, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("MC", &time_minutes, 0, 59, mui_u8g2_u8_min_max_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX("SC", &time_seconds, 0, 59, mui_u8g2_u8_min_max_wm_mud_pi),
     MUIF_U8G2_U8_MIN_MAX("YD", &year, 0, 99, mui_u8g2_u8_min_max_wm_mud_pi),
     MUIF_U8G2_U8_MIN_MAX("MD", &month, 1, 12, mui_u8g2_u8_min_max_wm_mud_pi),
     MUIF_U8G2_U8_MIN_MAX("DD", &day, 1, 31, mui_u8g2_u8_min_max_wm_mud_pi),
 
-    MUIF_U8G2_U8_MIN_MAX("NV", &num_value, 0, 99, mui_u8g2_u8_min_max_wm_mse_pi),
-    MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, mui_u8g2_u8_bar_wm_mse_pf),
-    MUIF_U8G2_U16_LIST("NA", &animal_idx, NULL, animal_name_list_get_str, animal_name_list_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    /*DFPlayer*/
+    MUIF_VARIABLE("LP", &loop_set, mui_u8g2_u8_chkbox_wm_pi),
+    MUIF_VARIABLE("LA", &loop_all_set, mui_u8g2_u8_chkbox_wm_pi),
+    MUIF_VARIABLE("RA", &random_all_set, mui_u8g2_u8_chkbox_wm_pi),
+    MUIF_VARIABLE("RT", &reset_dfp, mui_u8g2_u8_chkbox_wm_pi),
+    MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mud_pi),
 
+    MUIF_U8G2_U16_LIST("EQ", &eq_index_set, NULL, equalizer_get_str, equalizer_get_cnt, mui_u8g2_u16_list_line_wa_mud_pi),
+
+    // MUIF_U8G2_U8_MIN_MAX("NV", &num_value, 0, 99, mui_u8g2_u8_min_max_wm_mse_pi),
+    // MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, mui_u8g2_u8_bar_wm_mse_pf),
+
+    MUIF_U8G2_U16_LIST("ID", &selection, NULL, menu_get_str, menu_get_cnt, mui_u8g2_u16_list_goto_w1_pi),
     /* register custom function to show the data */
-    MUIF_RO("SH", show_my_data),
 
     /* a button for the menu... */
     MUIF_BUTTON("GO", mui_u8g2_btn_goto_wm_fi)};
@@ -161,68 +174,98 @@ fds_t fds_data[] =
                 MUI_STYLE(0)
                     MUI_XY("HR", 0, 11)
                         MUI_DATA("GP",
-                                 MUI_10 "Enter Data|" MUI_12 "Show Data|" MUI_20 "Clock Settings")
+                                 MUI_10 "Clock|" MUI_20 "Player|" MUI_30 "Light")
                             MUI_XYA("GC", 5, 24, 0)
                                 MUI_XYA("GC", 5, 36, 1)
                                     MUI_XYA("GC", 5, 48, 2)
-    //
+    // Clock settings
     MUI_FORM(10)
-        MUI_STYLE(1)
-            MUI_LABEL(5, 8, "Enter Data")
-                MUI_XY("HR", 0, 11)
-                    MUI_STYLE(0)
-                        MUI_LABEL(5, 23, "Num:")
-                            MUI_LABEL(5, 35, "Bar:")
-                                MUI_LABEL(5, 47, "Animal:")
-                                    MUI_XY("NV", 50, 23)
-                                        MUI_XY("NB", 50, 35)
-                                            MUI_XY("NA", 50, 47)
-                                                MUI_XYAT("GO", 114, 60, 1, " Ok ")
-    //
-    MUI_FORM(12)
-        MUI_STYLE(1)
-            MUI_LABEL(5, 8, "Show Data")
-                MUI_XY("HR", 0, 11)
-                    MUI_STYLE(0)
-                        MUI_XY("SH", 0, 23)
-                            MUI_XYAT("GO", 114, 60, 1, " Ok ")
-    //
-    MUI_FORM(20)
         MUI_STYLE(1)
             MUI_LABEL(5, 8, "Clock settings")
                 MUI_STYLE(0)
                     MUI_XY("HR", 0, 11)
                         MUI_DATA("GP",
-                                 MUI_21 "Set clock|" MUI_22 "Set date")
+                                 MUI_11 "Set clock|" MUI_12 "Set date")
                             MUI_XYA("GC", 5, 24, 0)
                                 MUI_XYA("GC", 5, 36, 1)
-    //
-    MUI_FORM(21)
+    // Set clock
+    MUI_FORM(11)
         MUI_STYLE(1)
-            MUI_LABEL(5, 8, "Clock settings")
-                MUI_STYLE(0)
-                    MUI_XY("HR", 0, 11)
+            MUI_LABEL(5, 8, "Set clock")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
                         MUI_LABEL(5, 23, "Hours:")
                             MUI_LABEL(5, 35, "Minutes:")
                                 MUI_LABEL(5, 47, "Seconds:")
                                     MUI_XY("HC", 50, 23)
                                         MUI_XY("MC", 50, 35)
                                             MUI_XY("SC", 50, 47)
-                                                MUI_XYAT("G0", 114, 60, 1, " Ok ")
-                                                    MUI_GOTO(50, 20, 20, "OK")
-    //
-    MUI_FORM(22)
+                                                MUI_XYAT("GO", 114, 60, 10, " Ok ")
+    // Set date
+    MUI_FORM(12)
         MUI_STYLE(1)
-            MUI_LABEL(5, 8, "Date settings")
-                MUI_STYLE(0)
-                    MUI_XY("HR", 0, 11)
+            MUI_LABEL(5, 8, "Set date")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
                         MUI_LABEL(5, 23, "Day:")
                             MUI_LABEL(5, 35, "Month:")
                                 MUI_LABEL(5, 47, "Year:")
                                     MUI_XY("DD", 50, 23)
                                         MUI_XY("MD", 50, 35)
                                             MUI_XY("YD", 50, 47)
-                                                MUI_XYAT("G0", 114, 60, 1, " Ok ");
+                                                MUI_XYAT("GO", 114, 60, 10, " Ok ")
+    // Player settings
+    MUI_FORM(20)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Player settings")
+                MUI_STYLE(0)
+                    MUI_XY("HR", 0, 11)
+                        MUI_XYA("ID", 5, 24, 0)
+                            MUI_XYA("ID", 5, 36, 1)
+                                MUI_XYA("ID", 5, 48, 2)
+                                    MUI_XYA("ID", 5, 60, 3)
+    //
+    MUI_FORM(21)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Volume")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XY("VS", 1, 40)
+                            MUI_XYAT("GO", 114, 60, 20, " Ok ")
+    //
+    MUI_FORM(22)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "EQ select")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_LABEL(5, 24, "EQ:")
+                            MUI_XYA("EQ", 30, 24, 50)
+                                MUI_XYAT("GO", 114, 60, 20, " Ok ")
+    // Set loop
+    MUI_FORM(23)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Set loop")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XYAT("LP", 1, 24, 0, "Loop")
+                            MUI_XYAT("LA", 1, 36, 1, "Loop All")
+                                MUI_XYAT("GO", 114, 60, 20, " Ok ")
+    //
+    MUI_FORM(24)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Random")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XYAT("RA", 1, 24, 0, "Random all")
+                            MUI_XYAT("GO", 114, 60, 20, " Ok ")
+    //
+    MUI_FORM(25)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Reset")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XYAT("RT", 1, 24, 1, "Reset")
+                            MUI_XYAT("GO", 114, 60, 20, " Ok ");
 /*-------------------------*/
 
 unsigned long timerFreez;
@@ -231,13 +274,6 @@ void generalScreen();
 void playerScreen();
 void lightsInfo();
 void (*generalScreenFuncs[])() = {generalScreen, playerScreen, lightsInfo};
-int main_menu[] = {0, 0, 0, 0};
-const char *text_main_menu[] = {"Clock", "Music", "Light", "Relay"};
-int clock_menu[] = {0, 0};
-const char *text_clock_menu[] = {"Set time", "Set date"};
-int music_menu[] = {};
-const char *text_music_menu[] = {"EQ", "Loop", "Random", "Reset"};
-
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 String topicPath = "garden/summer_shower/";
 const char *inTopic[] = {
@@ -256,7 +292,7 @@ void saveConfig()
   File file = LittleFS.open("/config.json", "w");
   if (!file)
   {
-    Serial.println("Ошибка создания файла!");
+    Serial.println("File creation error!");
     return;
   }
   serializeJson(configJson, file);
@@ -277,6 +313,66 @@ void loadConfig()
     Serial.println("Error load \"config.json\"!");
     return;
   }
+}
+
+void saveDFPlayerConfig()
+{
+
+  File file = LittleFS.open("/dfplayer_config", "w");
+  if (!file)
+  {
+    Serial.println("File creation error!");
+    return;
+  }
+  configDFPlayer["last_play_track"] = last_play_track;
+  configDFPlayer["equaliser"] = eq_index_set;
+  configDFPlayer["volume"] = volume_set;
+  configDFPlayer["rendom_all"] = random_all_set;
+  configDFPlayer["loop"] = loop_set;
+  configDFPlayer["loop_all"] = loop_all_set;
+  configDFPlayer["reset_dfp"] = reset_dfp;
+  serializeJson(configDFPlayer, file);
+  file.close();
+}
+
+void loadDFPlayerConfig()
+{
+  File file = LittleFS.open("/dfplayer_config", "r");
+  if (!file)
+  {
+    Serial.println("File \"dfplayer_config\" not found!");
+  }
+  DeserializationError error = deserializeJson(configDFPlayer, file);
+  file.close();
+  if (error)
+  {
+    Serial.println("Error load \"dfplayer_config\"!");
+    return;
+  }
+  last_play_track = configDFPlayer["last_play_track"].as<int>();
+  eq_index_set = configDFPlayer["equaliser"].as<int>();
+  volume_set = configDFPlayer["volume"].as<int>();
+  random_all_set = configDFPlayer["rendom_all"].as<int>();
+  loop_set = configDFPlayer["loop"].as<int>();
+  loop_set = configDFPlayer["loop_all"].as<int>();
+  reset_dfp = configDFPlayer["reset_dfp"].as<int>();
+  (loop_set) ? myDFPlayer.enableLoop() : myDFPlayer.disableLoop();
+  (loop_all_set) ? myDFPlayer.enableLoopAll() : myDFPlayer.disableLoopAll();
+  if (random_all_set)
+    myDFPlayer.randomAll();
+  myDFPlayer.volume(volume_set);
+  myDFPlayer.EQ(eq_index_set);
+}
+
+void requireChangeSetDFP()
+{
+  if (eq_index_set != configDFPlayer["equaliser"].as<int>() || volume_set != configDFPlayer["volume"].as<int>() || random_all_set != configDFPlayer["rendom_all"].as<int>() || loop_set != configDFPlayer["loop"].as<int>() || loop_all_set != configDFPlayer["loop_all"].as<int>())
+  {
+    saveDFPlayerConfig();
+    loadDFPlayerConfig();
+  }
+  if (reset_dfp)
+    myDFPlayer.reset();
 }
 
 void callbackMqtt(char *topic, byte *payload, unsigned int length)
@@ -728,10 +824,9 @@ void setup()
   loadConfig();
   connectWiFi(configJson["wifi_mode"].as<int>());
   Wire.begin();
-  PCF_keyboard.begin();
+  PCFKeyboard.begin();
   u8g2.begin();
   mui.begin(u8g2, fds_data, muif_list, sizeof(muif_list) / sizeof(muif_t));
-  // mui.gotoForm(1, 0);
   mySwitch.enableReceive(13);
   if (!rtc.begin())
   {
@@ -754,7 +849,7 @@ void setup()
   Serial.println(WiFi.localIP());
   Serial.println(WiFi.gatewayIP());
   Serial.println(WiFi.subnetMask());
-  PCF_relay.begin();
+  PCFRelay.begin();
   pinMode(33, INPUT);
   pinMode(35, INPUT);
   pinMode(13, INPUT);
@@ -773,14 +868,15 @@ void setup()
   Serial.println(F("DFPlayer Mini online."));
 
   myDFPlayer.setTimeOut(500); // Set serial communictaion time out 500ms
+  loadDFPlayerConfig();
 
   //----Set volume----
-  myDFPlayer.volume(25);   // Set volume value (0~30).
-  myDFPlayer.volumeUp();   // Volume Up
-  myDFPlayer.volumeDown(); // Volume Down
+  // myDFPlayer.volume(volume_set); // Set volume value (0~30).
+  // myDFPlayer.volumeUp();   // Volume Up
+  // myDFPlayer.volumeDown(); // Volume Down
 
   //----Set different EQ----
-  myDFPlayer.EQ(DFPLAYER_EQ_NORMAL);
+  //  myDFPlayer.EQ(DFPLAYER_EQ_NORMAL);
   //  myDFPlayer.EQ(DFPLAYER_EQ_POP);
   //  myDFPlayer.EQ(DFPLAYER_EQ_ROCK);
   //  myDFPlayer.EQ(DFPLAYER_EQ_JAZZ);
@@ -795,7 +891,7 @@ void setup()
   //  myDFPlayer.outputDevice(DFPLAYER_DEVICE_FLASH);
 
   //----Mp3 control----
-  //  myDFPlayer.sleep();     //sleep
+  // myDFPlayer.sleep();     //sleep
   //  myDFPlayer.reset();     //Reset the module
   myDFPlayer.enableDAC(); // Enable On-chip DAC
   //  myDFPlayer.disableDAC();  //Disable On-chip DAC
@@ -837,7 +933,7 @@ void setup()
                               // delay(1000);
 
   //----Read imformation----
-  // Serial.println(myDFPlayer.readState());               // read mp3 state
+  // Serial.println(myDFPlayer.readState()); // read mp3 state
   // Serial.println(myDFPlayer.readVolume());              // read current volume
   // Serial.println(myDFPlayer.readEQ());                  // read EQ setting
   // Serial.println(myDFPlayer.readFileCounts());          // read all file counts in SD card
@@ -861,52 +957,38 @@ void loop(void)
       is_redraw = 0; /* clear the redraw flag */
       menu_show_timer = millis();
     }
+
     if (millis() - menu_show_timer > 30000)
     { // exit menu if timeout 30 sec
       mui.leaveForm();
       return;
     }
-    /* handle events */
-    // switch (u8g2.getMenuEvent())
-    // {
-    // case U8X8_MSG_GPIO_MENU_SELECT:
-    //   mui.sendSelect();
-    //   is_redraw = 1;
-    //   break;
-    // case U8X8_MSG_GPIO_MENU_NEXT:
-    //   mui.nextField();
-    //   is_redraw = 1;
-    //   break;
-    // case U8X8_MSG_GPIO_MENU_PREV:
-    //   mui.prevField();
-    //   is_redraw = 1;
-    //   break;
-    // }
+
     if (millis() - timerFreez > 300)
     {
-      if (analogRead(33) < 1800)
+      if (analogRead(joystikUpDownPin) < 1500)
       { // down
         mui.nextField();
         is_redraw = 1;
       }
-      if (analogRead(33) > 2000)
+      if (analogRead(joystikUpDownPin) > 2300)
       { // down
         mui.prevField();
         is_redraw = 1;
       }
-      if (!PCF_keyboard.read(7))
+      if (!PCFKeyboard.read(7))
       { // Ok/select
-        if (mui.getCurrentFormId() == 21 && mui.getCurrentCursorFocusPosition() == 3)
+        if (mui.getCurrentFormId() == 11 && mui.getCurrentCursorFocusPosition() == 3)
         { // Set time
-          rtc.adjust(DateTime((String(now.year()).substring(0, 2) + String(year)).toInt(), month, day, timeHours, timeMinutes, timeSeconds));
-          mui.gotoForm(20, 0);
+          rtc.adjust(DateTime((String(now.year()).substring(0, 2) + String(year)).toInt(), month, day, time_hours, time_minutes, time_seconds));
+          mui.gotoForm(10, 0);
           is_redraw = 1;
           // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
         }
-        else if (mui.getCurrentFormId() == 22 && mui.getCurrentCursorFocusPosition() == 3)
+        else if (mui.getCurrentFormId() == 12 && mui.getCurrentCursorFocusPosition() == 3)
         {
-          rtc.adjust(DateTime((String(now.year()).substring(0, 2) + String(year)).toInt(), month, day, timeHours, timeMinutes, timeSeconds));
-          mui.gotoForm(20, 0);
+          rtc.adjust(DateTime((String(now.year()).substring(0, 2) + String(year)).toInt(), month, day, time_hours, time_minutes, time_seconds));
+          mui.gotoForm(10, 0);
           is_redraw = 1;
         }
         else
@@ -915,7 +997,7 @@ void loop(void)
           is_redraw = 1;
         }
       }
-      if (!PCF_keyboard.read(1))
+      if (!PCFKeyboard.read(1))
       { // Home
         if (mui.getCurrentFormId() == 1)
         { // Exit from menu
@@ -923,14 +1005,27 @@ void loop(void)
           return;
         }
         else
-        { // start menu
-          if (mui.getCurrentFormId() > 20 && mui.getCurrentFormId() < 30)
+        {                                                                 // start menu
+          if (mui.getCurrentFormId() > 10 && mui.getCurrentFormId() < 20) // return clock settings
+          {
+            mui.gotoForm(10, 0);
+            is_redraw = 1;
+          }
+          else if (mui.getCurrentFormId() > 20 && mui.getCurrentFormId() < 30) // return player settings
           {
             mui.gotoForm(20, 0);
+            is_redraw = 1;
           }
-          else
+          else if (mui.getCurrentFormId() > 30 && mui.getCurrentFormId() < 40) // return light settings
+          {
+            mui.gotoForm(30, 0);
+            is_redraw = 1;
+          }
+
+          else // return main settings
           {
             mui.gotoForm(1, 0);
+            is_redraw = 1;
           }
 
           is_redraw = 1;
@@ -951,7 +1046,7 @@ void loop(void)
           break;
         }
       }
-      if (analogRead(joystikLeftRightPin) <= 1800 && millis() - timerFreez > 300)
+      if (analogRead(joystikLeftRightPin) < 1500 && millis() - timerFreez > 200)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
         for (size_t i = 0; i < count; i++)
@@ -973,7 +1068,7 @@ void loop(void)
         }
         timerFreez = millis();
       }
-      if (analogRead(joystikLeftRightPin) >= 2000 && millis() - timerFreez > 300)
+      if (analogRead(joystikLeftRightPin) > 2300 && millis() - timerFreez > 300)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
         for (size_t i = 0; i < count; i++)
@@ -997,7 +1092,7 @@ void loop(void)
       }
     }
   }
-  if (!mui.isFormActive() && !PCF_keyboard.read(7))
+  if (!mui.isFormActive() && !PCFKeyboard.read(7))
   { // open menu
     mui.gotoForm(1, 0);
     is_redraw = true;
@@ -1007,9 +1102,9 @@ void loop(void)
   now = rtc.now();
   if (!mui.isFormActive())
   {
-    timeHours = now.hour();
-    timeMinutes = now.minute();
-    timeSeconds = now.second();
+    time_hours = now.hour();
+    time_minutes = now.minute();
+    time_seconds = now.second();
     day = now.day();
     month = now.month();
     year = (uint8_t)String(now.year()).substring(2).toInt();
@@ -1041,22 +1136,23 @@ void loop(void)
     }
     mqttClient.loop();
     unsigned long now = millis();
-    if (now - lastMsg > 10000)
+    if (now - last_msg > 10000)
     {
       if (WiFi.getMode() != WIFI_MODE_AP)
       {
         if (WiFi.status() != WL_CONNECTED)
           connectWiFi(configJson["wifi_mode"].as<int>());
-        lastMsg = now;
-        char topicBuffer[100];
-        snprintf(topicBuffer, sizeof(topicBuffer), "Clients_IP/%s/IP", configJson["clientId"].as<const char *>());
+        last_msg = now;
+        char topic_buffer[100];
+        snprintf(topic_buffer, sizeof(topic_buffer), "Clients_IP/%s/IP", configJson["clientId"].as<const char *>());
         char ipStr[16];
         snprintf(ipStr, sizeof(ipStr), "%s", WiFi.localIP().toString().c_str());
-        mqttClient.publish(topicBuffer, ipStr);
+        mqttClient.publish(topic_buffer, ipStr);
       }
     }
   }
   server.handleClient();
+  requireChangeSetDFP();
   // for (size_t i = 0; i < 8; i++)
   // {
   //   if (!PCF_keyboard.readButton(i) && i != 3)
