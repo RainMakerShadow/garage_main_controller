@@ -1,4 +1,3 @@
-
 #include <U8g2lib.h>
 #include <MUIU8g2.h>
 // #include <SoftwareSerial.h>
@@ -17,6 +16,8 @@
 #include <PCF8575.h> //https://github.com/RobTillaart/PCF8574
 #include <DFRobotDFPlayerMini.h>
 
+void saveDFPlayerConfig();
+
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 RTC_DS3231 rtc;
@@ -27,18 +28,15 @@ WebServer server(80);
 HTTPUpdateServer httpUpdater;
 PCF8574 PCFKeyboard(0x27);
 PCF8574 PCFRelay(0x26);
-#if (defined(ARDUINO_AVR_UNO) || defined(ESP8266)) // Using a soft serial port
-#include <SoftwareSerial.h>
-SoftwareSerial softSerial(/*rx =*/4, /*tx =*/5);
-#define FPSerial softSerial
-#else
+
 #define FPSerial Serial2
-#endif
-// I2C device found at 0x26 PCF 1
-// I2C device found at 0x27 PCF 2
-// I2C device found at 0x57 EEPROM DS3231
-// I2C device found at 0x68 DS3231
-// I2C device found at 0x76 BME2800
+/*
+  I2C device found at 0x26 PCF 1
+  I2C device found at 0x27 PCF 2
+  I2C device found at 0x57 EEPROM DS3231
+  I2C device found at 0x68 DS3231
+  I2C device found at 0x76 BME2800
+*/
 
 DFRobotDFPlayerMini myDFPlayer;
 // Створюємо об'єкт дисплея для SPI
@@ -53,13 +51,15 @@ String authFailResponse = "Authentication Failed";
 
 unsigned long last_msg;
 int timeout_mqtt_reconnect = 3000;
-unsigned long timer;
+unsigned long timer_save_last_track;
+unsigned long timer_mqtt_reconnect;
 unsigned long read_joystik_timer;
 float temp_inside = 28.7;
 float temp_outside = -12.3;
 float pressure = 46;
 float humidity = 758.8;
 const char *wifi_modes[] = {"Station", "Access point"};
+uint8_t is_redraw = 1;
 
 #define joystikLeftRightPin 35
 #define joystikUpDownPin 33
@@ -74,22 +74,21 @@ uint8_t year;
 
 /*DFPlayer*/
 const char *equalizer[] = {"Normal", "Pop", "Rock", "Jazz", "Classic", "Bass"};
-uint8_t last_play_track;
+int last_play_track;
 uint16_t eq_index_set;
 uint8_t volume_set;
 bool random_all_set;
 bool loop_set;
 bool loop_all_set;
 bool reset_dfp;
+bool play_pause = false;
+int file_count;
 
 /*display mui*/
 uint8_t num_value = 0;
 uint8_t bar_value = 0;
 uint16_t animal_idx = 0;
 
-/*
-  list of animal names
-*/
 unsigned long key_timer;
 unsigned long menu_show_timer;
 
@@ -130,10 +129,200 @@ const char *equalizer_get_str(void *data, uint16_t index)
 {
   return equalizer[index];
 }
+uint8_t openCloseDoors(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = mui_get_y(ui);
+
+    if (mui_IsCursorFocus(ui))
+    {
+      u8g2.setDrawColor(1);             // белый фон
+      u8g2.drawBox(0, y - 10, 128, 12); // выделение
+      u8g2.setDrawColor(0);             // чёрный текст
+    }
+    else
+    {
+      u8g2.setDrawColor(1); // обычный белый текст
+    }
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(5, y, "Open/Close");
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+
+  else if (msg == MUIF_MSG_CURSOR_SELECT)
+  {
+    // кнопка нажата!
+    mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+    return 1;
+  }
+  return 0;
+}
+
+uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = mui_get_y(ui);
+
+    if (mui_IsCursorFocus(ui))
+    {
+      u8g2.setDrawColor(1);             // белый фон
+      u8g2.drawBox(0, y - 10, 128, 12); // выделение
+      u8g2.setDrawColor(0);             // чёрный текст
+    }
+    else
+    {
+      u8g2.setDrawColor(1); // обычный белый текст
+    }
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(5, y, "Pause/play");
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+
+  else if (msg == MUIF_MSG_CURSOR_SELECT)
+  {
+    int state = myDFPlayer.readState();
+    if (state == 1)
+    {
+      // Serial.print("Track number: ");
+      // myDFPlayer.readCurrentFileNumber();
+      // last_play_track = myDFPlayer.readFileCounts();
+      saveDFPlayerConfig();
+      // delay(300);
+      myDFPlayer.pause();
+    }
+    else if (state == 2)
+    {
+      myDFPlayer.start();
+    }
+    else if (state == 0)
+    {
+      myDFPlayer.play(last_play_track);
+    }
+    return 1;
+  }
+  return 0;
+}
+uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = mui_get_y(ui);
+
+    if (mui_IsCursorFocus(ui))
+    {
+      u8g2.setDrawColor(1);             // белый фон
+      u8g2.drawBox(0, y - 10, 128, 12); // выделение
+      u8g2.setDrawColor(0);             // чёрный текст
+    }
+    else
+    {
+      u8g2.setDrawColor(1); // обычный белый текст
+    }
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(5, y, "Next");
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+
+  else if (msg == MUIF_MSG_CURSOR_SELECT)
+  {
+    myDFPlayer.next();
+    // delay(300);
+    // last_play_track = myDFPlayer.readCurrentFileNumber();
+    return 1;
+  }
+  return 0;
+}
+uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = mui_get_y(ui);
+
+    if (mui_IsCursorFocus(ui))
+    {
+      u8g2.setDrawColor(1);             // белый фон
+      u8g2.drawBox(0, y - 10, 128, 12); // выделение
+      u8g2.setDrawColor(0);             // чёрный текст
+    }
+    else
+    {
+      u8g2.setDrawColor(1); // обычный белый текст
+    }
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(5, y, "Previous");
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+
+  else if (msg == MUIF_MSG_CURSOR_SELECT)
+  {
+    myDFPlayer.previous();
+    // delay(300);
+    // last_play_track = myDFPlayer.readCurrentFileNumber();
+    return 1;
+  }
+  return 0;
+}
+uint8_t dfp_file_count(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = 60;
+
+    if (mui_IsCursorFocus(ui))
+    {
+      u8g2.setDrawColor(1);              // белый фон
+      u8g2.drawBox(40, y - 128, 20, 12); // выделение
+      u8g2.setDrawColor(0);              // чёрный текст
+    }
+    else
+    {
+      u8g2.setDrawColor(1); // обычный белый текст
+    }
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(5, y, String(file_count).c_str());
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+  return 0;
+}
+uint8_t dfp_current_file(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = mui_get_y(ui);
+    u8g2.setDrawColor(0);            // чёрный текст
+    u8g2.drawBox(0, y - 10, 60, 24); // выделение
+    u8g2.setDrawColor(1);            // белый фон
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.setCursor(5, y);
+    u8g2.print(last_play_track);
+    u8g2.setCursor(20, y);
+    u8g2.print("/");
+    u8g2.setCursor(30, y);
+    u8g2.print(file_count);
+    // u8g2.drawStr(5, y, String(last_play_track.c_str()));
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+  return 0;
+}
 
 muif_t muif_list[] = {
     MUIF_U8G2_FONT_STYLE(0, u8g2_font_helvR08_tr), /* regular font */
     MUIF_U8G2_FONT_STYLE(1, u8g2_font_helvB08_tr), /* bold font */
+    MUIF_U8G2_FONT_STYLE(2, u8g2_font_8x13_tr),    /* bold font */
 
     MUIF_RO("HR", mui_hrule),
     MUIF_U8G2_LABEL(),
@@ -148,14 +337,23 @@ muif_t muif_list[] = {
     MUIF_U8G2_U8_MIN_MAX("MD", &month, 1, 12, mui_u8g2_u8_min_max_wm_mud_pi),
     MUIF_U8G2_U8_MIN_MAX("DD", &day, 1, 31, mui_u8g2_u8_min_max_wm_mud_pi),
 
-    /*DFPlayer*/
+    /*DFP settings*/
     MUIF_VARIABLE("LP", &loop_set, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_VARIABLE("LA", &loop_all_set, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_VARIABLE("RA", &random_all_set, mui_u8g2_u8_chkbox_wm_pi),
-    MUIF_VARIABLE("RT", &reset_dfp, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mud_pi),
-
+    MUIF_VARIABLE("RT", &reset_dfp, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_U8G2_U16_LIST("EQ", &eq_index_set, NULL, equalizer_get_str, equalizer_get_cnt, mui_u8g2_u16_list_line_wa_mud_pi),
+    MUIF_RO("FC", dfp_file_count),
+    MUIF_RO("CT", dfp_current_file),
+
+    /*DFPlayer*/
+    MUIF_BUTTON("DP", dfp_play_pause),
+    MUIF_BUTTON("NT", dfp_next_track),
+    MUIF_BUTTON("PT", dfp_previous_track),
+
+    /*Garage doors*/
+    MUIF_BUTTON("OC", openCloseDoors),
 
     // MUIF_U8G2_U8_MIN_MAX("NV", &num_value, 0, 99, mui_u8g2_u8_min_max_wm_mse_pi),
     // MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, mui_u8g2_u8_bar_wm_mse_pf),
@@ -164,7 +362,8 @@ muif_t muif_list[] = {
     /* register custom function to show the data */
 
     /* a button for the menu... */
-    MUIF_BUTTON("GO", mui_u8g2_btn_goto_wm_fi)};
+    MUIF_BUTTON("GO", mui_u8g2_btn_goto_wm_fi),
+    MUIF_BUTTON("G1", mui_u8g2_btn_back_wm_fi)};
 
 fds_t fds_data[] =
 
@@ -174,10 +373,11 @@ fds_t fds_data[] =
                 MUI_STYLE(0)
                     MUI_XY("HR", 0, 11)
                         MUI_DATA("GP",
-                                 MUI_10 "Clock|" MUI_20 "Player|" MUI_30 "Light")
+                                 MUI_10 "Clock|" MUI_20 "Player|" MUI_30 "Light|" MUI_40 "Open/Close doors")
                             MUI_XYA("GC", 5, 24, 0)
                                 MUI_XYA("GC", 5, 36, 1)
                                     MUI_XYA("GC", 5, 48, 2)
+                                        MUI_XYA("GC", 5, 60, 3)
     // Clock settings
     MUI_FORM(10)
         MUI_STYLE(1)
@@ -193,14 +393,16 @@ fds_t fds_data[] =
         MUI_STYLE(1)
             MUI_LABEL(5, 8, "Set clock")
                 MUI_XY("HR", 0, 11)
-                    MUI_STYLE(0)
-                        MUI_LABEL(5, 23, "Hours:")
-                            MUI_LABEL(5, 35, "Minutes:")
-                                MUI_LABEL(5, 47, "Seconds:")
-                                    MUI_XY("HC", 50, 23)
-                                        MUI_XY("MC", 50, 35)
-                                            MUI_XY("SC", 50, 47)
-                                                MUI_XYAT("GO", 114, 60, 10, " Ok ")
+                    MUI_STYLE(2)
+                        MUI_XY("HC", 30, 35)
+                            MUI_LABEL(40, 35, " : ")
+                                MUI_XY("MC", 55, 35)
+                                    MUI_LABEL(65, 35, " : ")
+                                        MUI_XY("SC", 80, 35)
+    //     MUI_LABEL(5, 35, "Minutes:")
+    //         MUI_LABEL(5, 47, "Seconds:")
+    MUI_STYLE(0)
+        MUI_XYAT("GO", 114, 60, 10, " Ok ")
     // Set date
     MUI_FORM(12)
         MUI_STYLE(1)
@@ -265,7 +467,26 @@ fds_t fds_data[] =
                 MUI_XY("HR", 0, 11)
                     MUI_STYLE(0)
                         MUI_XYAT("RT", 1, 24, 1, "Reset")
-                            MUI_XYAT("GO", 114, 60, 20, " Ok ");
+                            MUI_XYAT("GO", 114, 60, 20, " Ok ")
+    //
+    MUI_FORM(40)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Garage doors")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XYAT("OC", 10, 24, 1, "Open/Close")
+                            MUI_XYT("G1", 20, 60, "Back")
+                                MUI_XYAT("GO", 114, 60, 1, " Ok ")
+    //
+    MUI_FORM(50)
+        MUI_STYLE(1)
+            MUI_STYLE(0)
+                MUI_XYAT("DP", 10, 12, 1, "Play/pause")
+                    MUI_XYAT("NT", 10, 24, 1, "Next")
+                        MUI_XYAT("PT", 10, 36, 1, "Previous")
+                            MUI_LABEL(10, 48, "Tracks:")
+                                MUI_XY("FC", 70, 48)
+                                    MUI_XYAT("CT", 70, 60, 50, );
 /*-------------------------*/
 
 unsigned long timerFreez;
@@ -318,7 +539,7 @@ void loadConfig()
 void saveDFPlayerConfig()
 {
 
-  File file = LittleFS.open("/dfplayer_config", "w");
+  File file = LittleFS.open("/dfplayer_config.json", "w");
   if (!file)
   {
     Serial.println("File creation error!");
@@ -327,50 +548,72 @@ void saveDFPlayerConfig()
   configDFPlayer["last_play_track"] = last_play_track;
   configDFPlayer["equaliser"] = eq_index_set;
   configDFPlayer["volume"] = volume_set;
-  configDFPlayer["rendom_all"] = random_all_set;
-  configDFPlayer["loop"] = loop_set;
-  configDFPlayer["loop_all"] = loop_all_set;
-  configDFPlayer["reset_dfp"] = reset_dfp;
   serializeJson(configDFPlayer, file);
   file.close();
 }
 
 void loadDFPlayerConfig()
 {
-  File file = LittleFS.open("/dfplayer_config", "r");
+  File file = LittleFS.open("/dfplayer_config.json", "r");
   if (!file)
   {
-    Serial.println("File \"dfplayer_config\" not found!");
+    Serial.println("File \"dfplayer_config.json\" not found!");
   }
   DeserializationError error = deserializeJson(configDFPlayer, file);
   file.close();
   if (error)
   {
-    Serial.println("Error load \"dfplayer_config\"!");
+    Serial.println("Error load \"dfplayer_config.json\"!");
     return;
   }
-  last_play_track = configDFPlayer["last_play_track"].as<int>();
-  eq_index_set = configDFPlayer["equaliser"].as<int>();
-  volume_set = configDFPlayer["volume"].as<int>();
-  random_all_set = configDFPlayer["rendom_all"].as<int>();
-  loop_set = configDFPlayer["loop"].as<int>();
-  loop_set = configDFPlayer["loop_all"].as<int>();
-  reset_dfp = configDFPlayer["reset_dfp"].as<int>();
-  (loop_set) ? myDFPlayer.enableLoop() : myDFPlayer.disableLoop();
-  (loop_all_set) ? myDFPlayer.enableLoopAll() : myDFPlayer.disableLoopAll();
-  if (random_all_set)
-    myDFPlayer.randomAll();
-  myDFPlayer.volume(volume_set);
-  myDFPlayer.EQ(eq_index_set);
+  else
+  {
+    last_play_track = configDFPlayer["last_play_track"].as<int>();
+    eq_index_set = configDFPlayer["equaliser"].as<int>();
+    volume_set = configDFPlayer["volume"].as<int>();
+    random_all_set = configDFPlayer["rendom_all"].as<int>();
+    loop_set = configDFPlayer["loop"].as<int>();
+    loop_set = configDFPlayer["loop_all"].as<int>();
+    (loop_set) ? myDFPlayer.enableLoop() : myDFPlayer.disableLoop();
+    delay(100);
+    myDFPlayer.volume(volume_set);
+    delay(100);
+    myDFPlayer.EQ(eq_index_set);
+    delay(100);
+  }
 }
 
 void requireChangeSetDFP()
 {
-  if (eq_index_set != configDFPlayer["equaliser"].as<int>() || volume_set != configDFPlayer["volume"].as<int>() || random_all_set != configDFPlayer["rendom_all"].as<int>() || loop_set != configDFPlayer["loop"].as<int>() || loop_all_set != configDFPlayer["loop_all"].as<int>())
+  if (eq_index_set != configDFPlayer["equaliser"].as<int>())
   {
+    myDFPlayer.EQ(eq_index_set);
     saveDFPlayerConfig();
-    loadDFPlayerConfig();
   }
+  else if (volume_set != configDFPlayer["volume"].as<int>())
+  {
+    myDFPlayer.volume(volume_set);
+    saveDFPlayerConfig();
+  }
+  else if (random_all_set != configDFPlayer["rendom_all"].as<int>())
+  {
+    if (random_all_set)
+    {
+      myDFPlayer.randomAll();
+    }
+    saveDFPlayerConfig();
+  }
+  else if (loop_set != configDFPlayer["loop"].as<int>())
+  {
+    (loop_set) ? myDFPlayer.enableLoop() : myDFPlayer.disableLoop();
+    saveDFPlayerConfig();
+  }
+  else if (loop_all_set != configDFPlayer["loop_all"].as<int>())
+  {
+    (loop_all_set) ? myDFPlayer.enableLoopAll() : myDFPlayer.disableLoopAll();
+    saveDFPlayerConfig();
+  }
+
   if (reset_dfp)
     myDFPlayer.reset();
 }
@@ -667,12 +910,16 @@ void generalScreen()
 }
 void playerScreen()
 {
-
-  u8g2.firstPage();
-  do
+  /* update the display content, if the redraw flag is set */
+  if (is_redraw)
   {
-    printDate();
-  } while (u8g2.nextPage());
+    u8g2.firstPage();
+    do
+    {
+      printDate();
+    } while (u8g2.nextPage());
+    is_redraw = 0; /* clear the redraw flag */
+  }
 }
 void lightsInfo()
 {
@@ -681,10 +928,11 @@ void lightsInfo()
   {
     printDate();
   } while (u8g2.nextPage());
+  is_redraw = 0; /* clear the redraw flag */
 }
 void reconnectMqtt()
 {
-  if ((int)(millis() - timer) > timeout_mqtt_reconnect)
+  if ((int)(millis() - timer_mqtt_reconnect) > timeout_mqtt_reconnect)
   {
     if (!mqttClient.connected())
     {
@@ -697,7 +945,7 @@ void reconnectMqtt()
         }
       }
     }
-    timer = millis();
+    timer_mqtt_reconnect = millis();
   }
 }
 
@@ -866,9 +1114,10 @@ void setup()
       ;
   }
   Serial.println(F("DFPlayer Mini online."));
-
+  delay(500);
   myDFPlayer.setTimeOut(500); // Set serial communictaion time out 500ms
   loadDFPlayerConfig();
+  myDFPlayer.stop();
 
   //----Set volume----
   // myDFPlayer.volume(volume_set); // Set volume value (0~30).
@@ -936,11 +1185,12 @@ void setup()
   // Serial.println(myDFPlayer.readState()); // read mp3 state
   // Serial.println(myDFPlayer.readVolume());              // read current volume
   // Serial.println(myDFPlayer.readEQ());                  // read EQ setting
-  // Serial.println(myDFPlayer.readFileCounts());          // read all file counts in SD card
+  myDFPlayer.readFileCounts();
+  file_count = myDFPlayer.readFileCounts();
+  // read all file counts in SD card
   // Serial.println(myDFPlayer.readCurrentFileNumber());   // read current play file number
   // Serial.println(myDFPlayer.readFileCountsInFolder(3)); // read file counts in folder SD:/03
 }
-uint8_t is_redraw = 1;
 void loop(void)
 {
   if (mui.isFormActive())
@@ -954,7 +1204,10 @@ void loop(void)
       {
         mui.draw();
       } while (u8g2.nextPage());
-      is_redraw = 0; /* clear the redraw flag */
+      if (mui.getCurrentFormId() != 50)
+      {
+        is_redraw = 0; /* clear the redraw flag */
+      }
       menu_show_timer = millis();
     }
 
@@ -968,13 +1221,16 @@ void loop(void)
     {
       if (analogRead(joystikUpDownPin) < 1500)
       { // down
+
         mui.nextField();
         is_redraw = 1;
       }
       if (analogRead(joystikUpDownPin) > 2300)
       { // down
-        mui.prevField();
-        is_redraw = 1;
+        {
+          mui.prevField();
+          is_redraw = 1;
+        }
       }
       if (!PCFKeyboard.read(7))
       { // Ok/select
@@ -1001,6 +1257,14 @@ void loop(void)
       { // Home
         if (mui.getCurrentFormId() == 1)
         { // Exit from menu
+          mui.leaveForm();
+          return;
+        }
+        else if (mui.getCurrentFormId() == 50)
+        {
+          mainScreen[0] = 1;
+          mainScreen[1] = 0;
+          mainScreen[2] = 0;
           mui.leaveForm();
           return;
         }
@@ -1038,6 +1302,7 @@ void loop(void)
   {
     if (mainScreen[0] || mainScreen[1] || mainScreen[2])
     {
+
       for (size_t i = 0; i < sizeof(mainScreen) / sizeof(mainScreen[0]); i++)
       {
         if (mainScreen[i])
@@ -1046,18 +1311,23 @@ void loop(void)
           break;
         }
       }
-      if (analogRead(joystikLeftRightPin) < 1500 && millis() - timerFreez > 200)
+
+      if (analogRead(joystikLeftRightPin) < 1500 && millis() - timerFreez > 300)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
+
         for (size_t i = 0; i < count; i++)
         {
+
           if (mainScreen[i])
           {
+
             if (i)
             {
               mainScreen[i - 1] = 1;
               mainScreen[i] = 0;
             }
+
             else
             {
               mainScreen[count - 1] = 1;
@@ -1068,18 +1338,23 @@ void loop(void)
         }
         timerFreez = millis();
       }
+
       if (analogRead(joystikLeftRightPin) > 2300 && millis() - timerFreez > 300)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
+
         for (size_t i = 0; i < count; i++)
         {
+
           if (mainScreen[i])
           {
+
             if ((i < count - 1))
             {
               mainScreen[i + 1] = 1;
               mainScreen[i] = 0;
             }
+
             else
             {
               mainScreen[i - i] = 1;
@@ -1092,9 +1367,15 @@ void loop(void)
       }
     }
   }
-  if (!mui.isFormActive() && !PCFKeyboard.read(7))
+  if (!mui.isFormActive() && !PCFKeyboard.read(7) && mainScreen[0])
   { // open menu
     mui.gotoForm(1, 0);
+    is_redraw = true;
+    timerFreez = millis();
+  }
+  else if (!mui.isFormActive() && mainScreen[1])
+  {
+    mui.gotoForm(50, 0);
     is_redraw = true;
     timerFreez = millis();
   }
@@ -1112,14 +1393,13 @@ void loop(void)
 
   if (mySwitch.available())
   {
-    Serial.println(mySwitch.getReceivedValue());
+    // Serial.println(mySwitch.getReceivedValue());
     if (mySwitch.getReceivedValue() == 13675425)
     {
       mqttClient.publish("garage/doors_controller/move_doors/move", "1");
     }
     if (mySwitch.getReceivedValue() == 13675426)
     {
-      // mqttClient.publish("garage/doors_controller/move_doors/close", "1");
     }
     // A 13675425
     // B 13675426
@@ -1171,16 +1451,24 @@ void loop(void)
   // }
   //   static unsigned long timer = millis();
 
-  //   // if (millis() - timer > 3000)
-  //   // {
-  //   //   timer = millis();
-  //   //   myDFPlayer.next(); // Play next mp3 every 3 second.
-  //   // }
-
-  //   if (myDFPlayer.available())
-  //   {
-  //     printDetail(myDFPlayer.readType(), myDFPlayer.read()); // Print the detail message from DFPlayer to handle different errors and states.
-  //   }
+  if (millis() - timer_save_last_track > 2000)
+  {
+    if (myDFPlayer.readState() == 1)
+    {
+      myDFPlayer.readCurrentFileNumber();
+      last_play_track = myDFPlayer.readFileCounts();
+    }
+    timer_save_last_track = millis();
+  }
+  if (myDFPlayer.available())
+  {
+    printDetail(myDFPlayer.readType(), myDFPlayer.read()); // Print the detail message from DFPlayer to handle different errors and states.
+  }
+  if (reset_dfp)
+  {
+    myDFPlayer.reset();
+    reset_dfp = 0;
+  }
   //   /*
   //   keys:
   //   pin 35-X left=0 right=4095 avarage = 1800-1900
