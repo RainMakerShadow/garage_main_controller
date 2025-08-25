@@ -18,7 +18,7 @@
 #include <LD2450.h>
 #include <EnvironmentCalculations.h>
 #include <BME280I2C.h>
-#include <Wire.h>
+#include <SparkFun_APDS9960.h>
 
 void saveDFPlayerConfig();
 
@@ -49,6 +49,11 @@ PCF8574 PCFKeyboard(0x27);
 PCF8574 PCFRelay(0x26);
 LD2450 ld2450;
 #define FPSerial Serial2
+#define gas_sensor_pin 32
+#define APDS9960_INT 26
+SparkFun_APDS9960 apds = SparkFun_APDS9960();
+int isr_flag = 0;
+
 /*
   I2C device found at 0x26 PCF 1
   I2C device found at 0x27 PCF 2
@@ -1055,54 +1060,54 @@ void printDetail(uint8_t type, int value)
   switch (type)
   {
   case TimeOut:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Time Out!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Time Out!");
     break;
   case WrongStack:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Stack Wrong!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Stack Wrong!");
     break;
   case DFPlayerCardInserted:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Card Inserted!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Card Inserted!");
     break;
   case DFPlayerCardRemoved:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Card Removed!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Card Removed!");
     break;
   case DFPlayerCardOnline:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Card Online!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Card Online!");
     break;
   case DFPlayerUSBInserted:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "USB Inserted!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "USB Inserted!");
     break;
   case DFPlayerUSBRemoved:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "USB Removed!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "USB Removed!");
     break;
   case DFPlayerPlayFinished:
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Number:");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Number:");
     // Serial.print(value);
-    mqttClient.publish("garage/main_controller/dfplayer/detail", "Play Finished!");
+    mqttClient.publish((topicPath + "dfplayer/detail").c_str(), "Play Finished!");
     break;
   case DFPlayerError:
     switch (value)
     {
     case Busy:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "Card not found");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "Card not found");
       break;
     case Sleeping:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "Sleeping");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "Sleeping");
       break;
     case SerialWrongStack:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "Get Wrong Stack");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "Get Wrong Stack");
       break;
     case CheckSumNotMatch:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "Check Sum Not Match");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "Check Sum Not Match");
       break;
     case FileIndexOut:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "File Index Out of Bound");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "File Index Out of Bound");
       break;
     case FileMismatch:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "Cannot Find File");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "Cannot Find File");
       break;
     case Advertise:
-      mqttClient.publish("garage/main_controller/dfplayer/errors", "In Advertise");
+      mqttClient.publish((topicPath + "dfplayer/errors").c_str(), "In Advertise");
       break;
     default:
       break;
@@ -1151,6 +1156,55 @@ void printBME280Data()
   ;
 }
 
+void interruptRoutine()
+{
+  isr_flag = 1;
+}
+
+void handleGesture()
+{
+  if (apds.isGestureAvailable())
+  {
+    switch (apds.readGesture())
+    {
+    case DIR_UP:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
+      break;
+    case DIR_DOWN:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
+      break;
+    case DIR_LEFT:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
+      Serial.println("LEFT");
+      break;
+    case DIR_RIGHT:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
+      Serial.println("RIGHT");
+      break;
+    case DIR_NEAR:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
+      Serial.println("NEAR");
+      break;
+    case DIR_FAR:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
+      Serial.println("FAR");
+      break;
+    default:
+      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
+      /*
+      To perform a NEAR gesture, hold your hand
+far above the sensor and move it close to the sensor (within 2
+inches). Hold your hand there for at least 1 second and move it
+away.
+
+To perform a FAR gesture, hold your hand within 2 inches of the
+sensor for at least 1 second and then move it above (out of
+range) of the sensor.
+*/
+    }
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -1186,6 +1240,7 @@ void setup()
   pinMode(33, INPUT);
   pinMode(35, INPUT);
   pinMode(13, INPUT);
+  pinMode(gas_sensor_pin, INPUT);
   while (!bme.begin())
   {
     Serial.println("Could not find BME280 sensor!");
@@ -1201,6 +1256,26 @@ void setup()
     break;
   default:
     Serial.println("Found UNKNOWN sensor! Error!");
+  }
+  pinMode(APDS9960_INT, INPUT);
+  attachInterrupt(0, interruptRoutine, FALLING);
+  if (apds.init())
+  {
+    Serial.println(F("APDS-9960 initialization complete"));
+  }
+  else
+  {
+    Serial.println(F("Something went wrong during APDS-9960 init!"));
+  }
+
+  // Start running the APDS-9960 gesture sensor engine
+  if (apds.enableGestureSensor(true))
+  {
+    Serial.println(F("Gesture sensor is now running"));
+  }
+  else
+  {
+    Serial.println(F("Something went wrong during gesture sensor init!"));
   }
 
   if (!myDFPlayer.begin(FPSerial, /*isACK = */ true, /*doReset = */ true))
@@ -1289,6 +1364,13 @@ void setup()
 }
 void loop(void)
 {
+  if (isr_flag == 1)
+  {
+    detachInterrupt(0);
+    handleGesture();
+    isr_flag = 0;
+    attachInterrupt(0, interruptRoutine, FALLING);
+  }
   if (mui.isFormActive())
   {
 
@@ -1558,7 +1640,11 @@ void loop(void)
           mqttClient.publish("garage/radar/value", "0");
         }
       }
+      mqttClient.publish((topicPath + "sensors/mq-135/gas").c_str(), String(analogRead(gas_sensor_pin)).c_str());
       printBME280Data();
+      if(analogRead(gas_sensor_pin)>3000||temp_inside>40){
+        mqttClient.publish((topicPath + "alert").c_str(), "1");
+      }
       send_mqqt_timer = millis();
     }
   }
