@@ -15,8 +15,27 @@
 #include <PCF8574.h> //https://github.com/RobTillaart/PCF8574
 #include <PCF8575.h> //https://github.com/RobTillaart/PCF8574
 #include <DFRobotDFPlayerMini.h>
+#include <LD2450.h>
+#include <EnvironmentCalculations.h>
+#include <BME280I2C.h>
+#include <Wire.h>
 
 void saveDFPlayerConfig();
+
+float referencePressure = 1018.6; // hPa local QFF (official meteor-station reading)
+float outdoorTemp = 4.7;          // °C  measured local outdoor temp.
+float barometerAltitude = 1650.3; // meters ... map readings + barometer position
+BME280I2C::Settings settings(
+    BME280::OSR_X1,
+    BME280::OSR_X1,
+    BME280::OSR_X1,
+    BME280::Mode_Forced,
+    BME280::StandbyTime_1000ms,
+    BME280::Filter_16,
+    BME280::SpiEnable_False,
+    BME280I2C::I2CAddr_0x76);
+
+BME280I2C bme(settings);
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -28,7 +47,7 @@ WebServer server(80);
 HTTPUpdateServer httpUpdater;
 PCF8574 PCFKeyboard(0x27);
 PCF8574 PCFRelay(0x26);
-
+LD2450 ld2450;
 #define FPSerial Serial2
 /*
   I2C device found at 0x26 PCF 1
@@ -36,6 +55,9 @@ PCF8574 PCFRelay(0x26);
   I2C device found at 0x57 EEPROM DS3231
   I2C device found at 0x68 DS3231
   I2C device found at 0x76 BME2800
+  pin 32 gas sensor
+  pin 34 rain sansor
+
 */
 
 DFRobotDFPlayerMini myDFPlayer;
@@ -56,11 +78,12 @@ unsigned long timer_mqtt_reconnect;
 unsigned long read_joystik_timer;
 float temp_inside = 28.7;
 float temp_outside = -12.3;
-float pressure = 46;
-float humidity = 758.8;
+float pressure = 758.8;
+float humidity = 46;
 const char *wifi_modes[] = {"Station", "Access point"};
 uint8_t is_redraw = 1;
 
+unsigned long send_mqqt_timer;
 #define joystikLeftRightPin 35
 #define joystikUpDownPin 33
 
@@ -92,6 +115,7 @@ uint16_t animal_idx = 0;
 unsigned long key_timer;
 unsigned long menu_show_timer;
 
+void printDate();
 uint16_t menu_get_cnt(void *data)
 {
   return 5; /* number of menu entries */
@@ -170,7 +194,7 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
     if (mui_IsCursorFocus(ui))
     {
       u8g2.setDrawColor(1);             // белый фон
-      u8g2.drawBox(0, y - 10, 128, 12); // выделение
+      u8g2.drawBox(40, y - 10, 60, 12); // выделение
       u8g2.setDrawColor(0);             // чёрный текст
     }
     else
@@ -179,7 +203,7 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
     }
 
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(5, y, "Pause/play");
+    u8g2.drawStr(45, y, "Pause/play");
     u8g2.setDrawColor(1); // восстановление цвета
     return 1;
   }
@@ -202,7 +226,43 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
     }
     else if (state == 0)
     {
-      myDFPlayer.play(last_play_track);
+      myDFPlayer.playMp3Folder(last_play_track);
+    }
+    return 1;
+  }
+  return 0;
+}
+
+uint8_t dfp_stop(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    uint8_t y = mui_get_y(ui);
+
+    if (mui_IsCursorFocus(ui))
+    {
+      u8g2.setDrawColor(1);             // белый фон
+      u8g2.drawBox(40, y - 10, 60, 12); // выделение
+      u8g2.setDrawColor(0);             // чёрный текст
+    }
+    else
+    {
+      u8g2.setDrawColor(1); // обычный белый текст
+    }
+
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(45, y, "Stop");
+    u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+
+  else if (msg == MUIF_MSG_CURSOR_SELECT)
+  {
+    int state = myDFPlayer.readState();
+    if (state == 1)
+    {
+      saveDFPlayerConfig();
+      myDFPlayer.stop();
     }
     return 1;
   }
@@ -216,9 +276,9 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
 
     if (mui_IsCursorFocus(ui))
     {
-      u8g2.setDrawColor(1);             // белый фон
-      u8g2.drawBox(0, y - 10, 128, 12); // выделение
-      u8g2.setDrawColor(0);             // чёрный текст
+      u8g2.setDrawColor(1);            // белый фон
+      u8g2.drawBox(0, y - 10, 60, 12); // выделение
+      u8g2.setDrawColor(0);            // чёрный текст
     }
     else
     {
@@ -249,7 +309,7 @@ uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
     if (mui_IsCursorFocus(ui))
     {
       u8g2.setDrawColor(1);             // белый фон
-      u8g2.drawBox(0, y - 10, 128, 12); // выделение
+      u8g2.drawBox(70, y - 10, 60, 12); // выделение
       u8g2.setDrawColor(0);             // чёрный текст
     }
     else
@@ -258,7 +318,7 @@ uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
     }
 
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(5, y, "Previous");
+    u8g2.drawStr(75, y, "Previous");
     u8g2.setDrawColor(1); // восстановление цвета
     return 1;
   }
@@ -272,30 +332,7 @@ uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
   }
   return 0;
 }
-uint8_t dfp_file_count(mui_t *ui, uint8_t msg)
-{
-  if (msg == MUIF_MSG_DRAW)
-  {
-    uint8_t y = 60;
 
-    if (mui_IsCursorFocus(ui))
-    {
-      u8g2.setDrawColor(1);              // белый фон
-      u8g2.drawBox(40, y - 128, 20, 12); // выделение
-      u8g2.setDrawColor(0);              // чёрный текст
-    }
-    else
-    {
-      u8g2.setDrawColor(1); // обычный белый текст
-    }
-
-    u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(5, y, String(file_count).c_str());
-    u8g2.setDrawColor(1); // восстановление цвета
-    return 1;
-  }
-  return 0;
-}
 uint8_t dfp_current_file(mui_t *ui, uint8_t msg)
 {
   if (msg == MUIF_MSG_DRAW)
@@ -314,6 +351,16 @@ uint8_t dfp_current_file(mui_t *ui, uint8_t msg)
     u8g2.print(file_count);
     // u8g2.drawStr(5, y, String(last_play_track.c_str()));
     u8g2.setDrawColor(1); // восстановление цвета
+    return 1;
+  }
+  return 0;
+}
+
+uint8_t print_date(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    printDate();
     return 1;
   }
   return 0;
@@ -344,13 +391,14 @@ muif_t muif_list[] = {
     MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mud_pi),
     MUIF_VARIABLE("RT", &reset_dfp, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_U8G2_U16_LIST("EQ", &eq_index_set, NULL, equalizer_get_str, equalizer_get_cnt, mui_u8g2_u16_list_line_wa_mud_pi),
-    MUIF_RO("FC", dfp_file_count),
     MUIF_RO("CT", dfp_current_file),
 
     /*DFPlayer*/
     MUIF_BUTTON("DP", dfp_play_pause),
+    MUIF_BUTTON("DS", dfp_stop),
     MUIF_BUTTON("NT", dfp_next_track),
     MUIF_BUTTON("PT", dfp_previous_track),
+    MUIF_RO("PD", print_date),
 
     /*Garage doors*/
     MUIF_BUTTON("OC", openCloseDoors),
@@ -481,12 +529,13 @@ fds_t fds_data[] =
     MUI_FORM(50)
         MUI_STYLE(1)
             MUI_STYLE(0)
-                MUI_XYAT("DP", 10, 12, 1, "Play/pause")
-                    MUI_XYAT("NT", 10, 24, 1, "Next")
-                        MUI_XYAT("PT", 10, 36, 1, "Previous")
-                            MUI_LABEL(10, 48, "Tracks:")
-                                MUI_XY("FC", 70, 48)
-                                    MUI_XYAT("CT", 70, 60, 50, );
+                MUI_XY("PD", 10, 12)
+                    MUI_XYAT("DP", 10, 24, 1, "Play/pause")
+                        MUI_XYAT("NT", 10, 36, 1, "Next")
+                            MUI_XYAT("PT", 10, 36, 1, "Previous")
+                                MUI_XYAT("DS", 10, 48, 1, "Stop")
+                                    MUI_XY("VS", 45, 60)
+                                        MUI_XY("CT", 10, 60);
 /*-------------------------*/
 
 unsigned long timerFreez;
@@ -496,7 +545,7 @@ void playerScreen();
 void lightsInfo();
 void (*generalScreenFuncs[])() = {generalScreen, playerScreen, lightsInfo};
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-String topicPath = "garden/summer_shower/";
+String topicPath = "garage/main_controller/";
 const char *inTopic[] = {
     "garage/main_controller/dfplayer/",
 };
@@ -513,7 +562,7 @@ void saveConfig()
   File file = LittleFS.open("/config.json", "w");
   if (!file)
   {
-    Serial.println("File creation error!");
+    // Serial.println("File creation error!");
     return;
   }
   serializeJson(configJson, file);
@@ -525,13 +574,13 @@ void loadConfig()
   File file = LittleFS.open("/config.json", "r");
   if (!file)
   {
-    Serial.println("File \"config.json\" not found!");
+    // Serial.println("File \"config.json\" not found!");
   }
   DeserializationError error = deserializeJson(configJson, file);
   file.close();
   if (error)
   {
-    Serial.println("Error load \"config.json\"!");
+    // Serial.println("Error load \"config.json\"!");
     return;
   }
 }
@@ -542,12 +591,15 @@ void saveDFPlayerConfig()
   File file = LittleFS.open("/dfplayer_config.json", "w");
   if (!file)
   {
-    Serial.println("File creation error!");
+    // Serial.println("File creation error!");
     return;
   }
   configDFPlayer["last_play_track"] = last_play_track;
   configDFPlayer["equaliser"] = eq_index_set;
   configDFPlayer["volume"] = volume_set;
+  configDFPlayer["random_all"] = random_all_set;
+  configDFPlayer["loop_all"] = loop_all_set;
+  configDFPlayer["loop"] = loop_set;
   serializeJson(configDFPlayer, file);
   file.close();
 }
@@ -557,13 +609,13 @@ void loadDFPlayerConfig()
   File file = LittleFS.open("/dfplayer_config.json", "r");
   if (!file)
   {
-    Serial.println("File \"dfplayer_config.json\" not found!");
+    // Serial.println("File \"dfplayer_config.json\" not found!");
   }
   DeserializationError error = deserializeJson(configDFPlayer, file);
   file.close();
   if (error)
   {
-    Serial.println("Error load \"dfplayer_config.json\"!");
+    // Serial.println("Error load \"dfplayer_config.json\"!");
     return;
   }
   else
@@ -571,7 +623,7 @@ void loadDFPlayerConfig()
     last_play_track = configDFPlayer["last_play_track"].as<int>();
     eq_index_set = configDFPlayer["equaliser"].as<int>();
     volume_set = configDFPlayer["volume"].as<int>();
-    random_all_set = configDFPlayer["rendom_all"].as<int>();
+    random_all_set = configDFPlayer["random_all"].as<int>();
     loop_set = configDFPlayer["loop"].as<int>();
     loop_set = configDFPlayer["loop_all"].as<int>();
     (loop_set) ? myDFPlayer.enableLoop() : myDFPlayer.disableLoop();
@@ -595,7 +647,7 @@ void requireChangeSetDFP()
     myDFPlayer.volume(volume_set);
     saveDFPlayerConfig();
   }
-  else if (random_all_set != configDFPlayer["rendom_all"].as<int>())
+  else if (random_all_set != configDFPlayer["random_all"].as<int>())
   {
     if (random_all_set)
     {
@@ -857,14 +909,14 @@ void printPressure()
 {
   u8g2.setColorIndex(1);
   u8g2.setCursor(90, 52);
-  u8g2.print(convertFloatToString(pressure, 4) + " %");
+  u8g2.print(convertFloatToString(humidity, 4) + " %");
 }
 
 void printHumidity()
 {
   u8g2.setColorIndex(1);
   u8g2.setCursor(90, 63);
-  u8g2.print(convertFloatToString(humidity, 3));
+  u8g2.print(convertFloatToString(pressure, 3));
   u8g2.setCursor(114, 63);
   u8g2.print("mm");
 }
@@ -957,28 +1009,28 @@ void connectWiFi(int mode)
     if (WiFi.status() != WL_CONNECTED)
     {
       WiFi.begin(configJson["ssid"].as<const char *>(), configJson["wifi_pass"].as<const char *>());
-      Serial.print("Connecting to WiFi");
+      // Serial.print("Connecting to WiFi");
       int tries = 0;
       while (WiFi.status() != WL_CONNECTED && tries < 20)
       { // ждём до 20 секунд
         delay(1000);
-        Serial.print(".");
+        // Serial.print(".");
         tries++;
       }
-      Serial.println();
+      // Serial.println();
       if (WiFi.status() == WL_CONNECTED)
       {
-        Serial.println("WiFi connected!");
+        // Serial.println("WiFi connected!");
       }
       else
       {
-        Serial.println("WiFi NOT connected!");
-        Serial.println("WiFi NOT connected! Starting access point.");
+        // Serial.println("WiFi NOT connected!");
+        // Serial.println("WiFi NOT connected! Starting access point.");
         if (WiFi.softAP(configJson["ssid"].as<const char *>(), configJson["wifi_pass"].as<const char *>()))
         {
-          Serial.println("Access point started!");
-          Serial.print("IP adress: ");
-          Serial.println(WiFi.softAPIP());
+          // Serial.println("Access point started!");
+          // Serial.print("IP adress: ");
+          // Serial.println(WiFi.softAPIP());
         }
       }
     }
@@ -987,13 +1039,13 @@ void connectWiFi(int mode)
   {
     if (WiFi.softAP(configJson["ssid"].as<const char *>(), configJson["wifi_pass"].as<const char *>()))
     {
-      Serial.println("Access point started!");
-      Serial.print("IP adress: ");
-      Serial.println(WiFi.softAPIP());
+      // Serial.println("Access point started!");
+      // Serial.print("IP adress: ");
+      // Serial.println(WiFi.softAPIP());
     }
     else
     {
-      Serial.println("Faild to start access point!");
+      // Serial.println("Faild to start access point!");
     }
   }
 }
@@ -1025,7 +1077,7 @@ void printDetail(uint8_t type, int value)
     break;
   case DFPlayerPlayFinished:
     mqttClient.publish("garage/main_controller/dfplayer/detail", "Number:");
-    Serial.print(value);
+    // Serial.print(value);
     mqttClient.publish("garage/main_controller/dfplayer/detail", "Play Finished!");
     break;
   case DFPlayerError:
@@ -1061,13 +1113,51 @@ void printDetail(uint8_t type, int value)
   }
 }
 
+void printBME280Data()
+{
+  float temp(NAN), hum(NAN), pres(NAN);
+
+  BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+  BME280::PresUnit presUnit(BME280::PresUnit_hPa);
+
+  bme.read(pres, temp, hum, tempUnit, presUnit);
+
+  float temp_pres = pres * 0.75006;
+  mqttClient.publish((topicPath + "sensors/BME280/temperature").c_str(), String(temp).c_str());
+  mqttClient.publish((topicPath + "sensors/BME280/pressure").c_str(), String(temp_pres).c_str());
+
+  temp_inside = temp;
+  pressure = temp_pres;
+  EnvironmentCalculations::AltitudeUnit envAltUnit = EnvironmentCalculations::AltitudeUnit_Meters;
+  EnvironmentCalculations::TempUnit envTempUnit = EnvironmentCalculations::TempUnit_Celsius;
+
+  /// To get correct local altitude/height (QNE) the reference Pressure
+  ///    should be taken from meteorologic messages (QNH or QFF)
+  float altitude = EnvironmentCalculations::Altitude(pres, envAltUnit, referencePressure, outdoorTemp, envTempUnit);
+
+  float dewPoint = EnvironmentCalculations::DewPoint(temp, hum, envTempUnit);
+
+  /// To get correct seaLevel pressure (QNH, QFF)
+  ///    the altitude value should be independent on measured pressure.
+  /// It is necessary to use fixed altitude point e.g. the altitude of barometer read in a map
+  float seaLevel = EnvironmentCalculations::EquivalentSeaLevelPressure(barometerAltitude, temp, pres, envAltUnit, envTempUnit);
+
+  float absHum = EnvironmentCalculations::AbsoluteHumidity(temp, hum, envTempUnit);
+
+  mqttClient.publish((topicPath + "sensors/BME280/altitude").c_str(), String(altitude).c_str());
+  mqttClient.publish((topicPath + "sensors/BME280/sea_level").c_str(), String(seaLevel).c_str());
+  float heatIndex = EnvironmentCalculations::HeatIndex(temp, hum, envTempUnit);
+  mqttClient.publish((topicPath + "sensors/BME280/heat_index").c_str(), String(heatIndex).c_str());
+  ;
+}
+
 void setup()
 {
   Serial.begin(115200);
   FPSerial.begin(9600);
   if (!LittleFS.begin())
   {
-    Serial.println("LittleFS mount failed!");
+    // Serial.println("LittleFS mount failed!");
   }
   loadConfig();
   connectWiFi(configJson["wifi_mode"].as<int>());
@@ -1092,28 +1182,32 @@ void setup()
   server.begin();
   mqttClient.setServer(configJson["mqtt_server"].as<const char *>(), configJson["mqtt_port"].as<int>());
   mqttClient.setCallback(callbackMqtt);
-  WiFi.printDiag(Serial);
-  Serial.println(WiFi.isConnected());
-  Serial.println(WiFi.localIP());
-  Serial.println(WiFi.gatewayIP());
-  Serial.println(WiFi.subnetMask());
   PCFRelay.begin();
   pinMode(33, INPUT);
   pinMode(35, INPUT);
   pinMode(13, INPUT);
-
-  Serial.println(F("DFRobot DFPlayer Mini Demo"));
-  Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
+  while (!bme.begin())
+  {
+    Serial.println("Could not find BME280 sensor!");
+    delay(1000);
+  }
+  switch (bme.chipModel())
+  {
+  case BME280::ChipModel_BME280:
+    Serial.println("Found BME280 sensor! Success.");
+    break;
+  case BME280::ChipModel_BMP280:
+    Serial.println("Found BMP280 sensor! No Humidity available.");
+    break;
+  default:
+    Serial.println("Found UNKNOWN sensor! Error!");
+  }
 
   if (!myDFPlayer.begin(FPSerial, /*isACK = */ true, /*doReset = */ true))
   { // Use serial to communicate with mp3.
-    Serial.println(F("Unable to begin:"));
-    Serial.println(F("1.Please recheck the connection!"));
-    Serial.println(F("2.Please insert the SD card!"));
     while (true)
       ;
   }
-  Serial.println(F("DFPlayer Mini online."));
   delay(500);
   myDFPlayer.setTimeOut(500); // Set serial communictaion time out 500ms
   loadDFPlayerConfig();
@@ -1161,25 +1255,25 @@ void setup()
   // myDFPlayer.playFolder(15, 4); // play specific mp3 in SD:/15/004.mp3; Folder Name(1~99); File Name(1~255)
   // delay(1000);
   myDFPlayer.enableLoopAll(); // loop all mp3 files.
-                              // delay(1000);
-                              // myDFPlayer.disableLoopAll(); // stop loop all mp3 files.
-                              // delay(1000);
-                              // myDFPlayer.playMp3Folder(4); // play specific mp3 in SD:/MP3/0004.mp3; File Name(0~65535)
-                              // delay(1000);
-                              // myDFPlayer.advertise(3); // advertise specific mp3 in SD:/ADVERT/0003.mp3; File Name(0~65535)
-                              // delay(1000);
-                              // myDFPlayer.stopAdvertise(); // stop advertise
-                              // delay(1000);
-                              // myDFPlayer.playLargeFolder(2, 999); // play specific mp3 in SD:/02/004.mp3; Folder Name(1~10); File Name(1~1000)
-                              // delay(1000);
-                              // myDFPlayer.loopFolder(5); // loop all mp3 files in folder SD:/05.
-                              // delay(1000);
-                              // myDFPlayer.randomAll(); // Random play all the mp3.
-                              // delay(1000);
-                              // myDFPlayer.enableLoop(); // enable loop.
-                              // delay(1000);
-                              // myDFPlayer.disableLoop(); // disable loop.
-                              // delay(1000);
+  // delay(1000);
+  // myDFPlayer.disableLoopAll(); // stop loop all mp3 files.
+  // delay(1000);
+  // myDFPlayer.playMp3Folder(4); // play specific mp3 in SD:/MP3/0004.mp3; File Name(0~65535)
+  // delay(1000);
+  // myDFPlayer.advertise(3); // advertise specific mp3 in SD:/ADVERT/0003.mp3; File Name(0~65535)
+  // delay(1000);
+  // myDFPlayer.stopAdvertise(); // stop advertise
+  // delay(1000);
+  // myDFPlayer.playLargeFolder(2, 999); // play specific mp3 in SD:/02/004.mp3; Folder Name(1~10); File Name(1~1000)
+  // delay(1000);
+  // myDFPlayer.loopFolder(5); // loop all mp3 files in folder SD:/05.
+  // delay(1000);
+  // myDFPlayer.randomAll(); // Random play all the mp3.
+  // delay(1000);
+  // myDFPlayer.enableLoop(); // enable loop.
+  // delay(1000);
+  // myDFPlayer.disableLoop(); // disable loop.
+  // delay(1000);
 
   //----Read imformation----
   // Serial.println(myDFPlayer.readState()); // read mp3 state
@@ -1190,6 +1284,8 @@ void setup()
   // read all file counts in SD card
   // Serial.println(myDFPlayer.readCurrentFileNumber());   // read current play file number
   // Serial.println(myDFPlayer.readFileCountsInFolder(3)); // read file counts in folder SD:/03
+  Serial.end();
+  ld2450.begin(Serial, false);
 }
 void loop(void)
 {
@@ -1219,13 +1315,13 @@ void loop(void)
 
     if (millis() - timerFreez > 300)
     {
-      if (analogRead(joystikUpDownPin) < 1500)
+      if (analogRead(joystikUpDownPin) < 1000)
       { // down
 
         mui.nextField();
         is_redraw = 1;
       }
-      if (analogRead(joystikUpDownPin) > 2300)
+      if (analogRead(joystikUpDownPin) > 3000)
       { // down
         {
           mui.prevField();
@@ -1260,14 +1356,6 @@ void loop(void)
           mui.leaveForm();
           return;
         }
-        else if (mui.getCurrentFormId() == 50)
-        {
-          mainScreen[0] = 1;
-          mainScreen[1] = 0;
-          mainScreen[2] = 0;
-          mui.leaveForm();
-          return;
-        }
         else
         {                                                                 // start menu
           if (mui.getCurrentFormId() > 10 && mui.getCurrentFormId() < 20) // return clock settings
@@ -1295,6 +1383,22 @@ void loop(void)
           is_redraw = 1;
         }
       }
+      if (analogRead(joystikLeftRightPin) > 3000 && mui.getCurrentFormId() == 50)
+      {
+        mainScreen[0] = 0;
+        mainScreen[1] = 0;
+        mainScreen[2] = 1;
+        mui.leaveForm();
+        return;
+      }
+      if (analogRead(joystikLeftRightPin) < 1000 && mui.getCurrentFormId() == 50)
+      {
+        mainScreen[0] = 0;
+        mainScreen[1] = 1;
+        mainScreen[2] = 0;
+        mui.leaveForm();
+        return;
+      }
       timerFreez = millis();
     }
   }
@@ -1307,12 +1411,13 @@ void loop(void)
       {
         if (mainScreen[i])
         {
-          generalScreenFuncs[i]();
+          if (i == 0)
+            generalScreenFuncs[i]();
           break;
         }
       }
 
-      if (analogRead(joystikLeftRightPin) < 1500 && millis() - timerFreez > 300)
+      if (analogRead(joystikLeftRightPin) < 1000 && millis() - timerFreez > 300 && mui.getCurrentFormId() != 50)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
 
@@ -1339,7 +1444,7 @@ void loop(void)
         timerFreez = millis();
       }
 
-      if (analogRead(joystikLeftRightPin) > 2300 && millis() - timerFreez > 300)
+      if (analogRead(joystikLeftRightPin) > 3000 && millis() - timerFreez > 300 && mui.getCurrentFormId() != 50)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
 
@@ -1430,15 +1535,41 @@ void loop(void)
         mqttClient.publish(topic_buffer, ipStr);
       }
     }
+    if (millis() - send_mqqt_timer > 1000)
+    {
+      int valid_targets = ld2450.read();
+
+      if (valid_targets > 0)
+      {
+        int valid = 0;
+        for (int i = 0; i < ld2450.getSensorSupportedTargetCount(); i++)
+
+        {
+          const LD2450::RadarTarget result_target = ld2450.getTarget(i);
+          if (result_target.valid)
+          {
+            mqttClient.publish("garage/radar/value", "1");
+            mqttClient.publish(String("garage/radar/targets/").c_str(), ld2450.getLastTargetMessage().c_str());
+            valid = 1;
+          }
+        }
+        if (!valid)
+        {
+          mqttClient.publish("garage/radar/value", "0");
+        }
+      }
+      printBME280Data();
+      send_mqqt_timer = millis();
+    }
   }
   server.handleClient();
   requireChangeSetDFP();
   // for (size_t i = 0; i < 8; i++)
   // {
-  //   if (!PCF_keyboard.readButton(i) && i != 3)
+  //   if (!PCFKeyboard.readButton(i) && i != 3)
   //     Serial.println(i);
   // }
-  // if (millis() - readJoystikTimer > 1000)
+  // if (millis() - read_joystik_timer > 1000)
   // {
   //   Serial.println("-----------------------");
   //   Serial.print("33:");
@@ -1447,17 +1578,20 @@ void loop(void)
   //   Serial.print("35:");
   //   Serial.println(analogRead(35));
   //   Serial.println("************************");
-  //   readJoystikTimer = millis();
+  //   read_joystik_timer = millis();
   // }
-  //   static unsigned long timer = millis();
+  // static unsigned long timer = millis();
 
   if (millis() - timer_save_last_track > 2000)
   {
-    if (myDFPlayer.readState() == 1)
+    int state = myDFPlayer.readState();
+    if (state == 1)
     {
       myDFPlayer.readCurrentFileNumber();
+      // last_play_track = myDFPlayer.readCurrentFileNumber();
       last_play_track = myDFPlayer.readFileCounts();
     }
+
     timer_save_last_track = millis();
   }
   if (myDFPlayer.available())
@@ -1468,6 +1602,7 @@ void loop(void)
   {
     myDFPlayer.reset();
     reset_dfp = 0;
+    ESP.restart();
   }
   //   /*
   //   keys:

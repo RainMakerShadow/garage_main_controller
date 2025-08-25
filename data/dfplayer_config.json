@@ -1,5 +1,8 @@
 {
     "last_play_track": 5,
     "volume": 15,
-    "equalizer": 1
+    "equalizer": 1,
+    "random_all": 0,
+    "loop": 0,
+    "loop_all": 0
 }
