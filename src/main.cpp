@@ -120,6 +120,18 @@ uint16_t animal_idx = 0;
 unsigned long key_timer;
 unsigned long menu_show_timer;
 
+uint16_t front_left = 0;
+int front_right = NAN;
+int left_front = NAN;
+int left_rear = NAN;
+int rear_left = NAN;
+int right_front = NAN;
+int right_rear = NAN;
+int rear_right = NAN;
+int light_detection = NAN;
+int all_light_on = NAN;
+int reset_light = NAN;
+
 void printDate();
 uint16_t menu_get_cnt(void *data)
 {
@@ -158,6 +170,20 @@ const char *equalizer_get_str(void *data, uint16_t index)
 {
   return equalizer[index];
 }
+
+// light
+static const char *light_status[] = {"OFF", "ON"};
+
+uint16_t light_status_get_cnt(void *data)
+{
+  return sizeof(light_status) / sizeof(*light_status);
+}
+
+const char *light_status_get_str(void *data, uint16_t index)
+{
+  return light_status[index];
+}
+
 uint8_t openCloseDoors(mui_t *ui, uint8_t msg)
 {
   if (msg == MUIF_MSG_DRAW)
@@ -198,9 +224,9 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
 
     if (mui_IsCursorFocus(ui))
     {
-      u8g2.setDrawColor(1);             // белый фон
-      u8g2.drawBox(40, y - 10, 60, 12); // выделение
-      u8g2.setDrawColor(0);             // чёрный текст
+      u8g2.setDrawColor(1);            // белый фон
+      u8g2.drawBox(5, y - 10, 30, 12); // выделение
+      u8g2.setDrawColor(0);            // чёрный текст
     }
     else
     {
@@ -208,7 +234,60 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
     }
 
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(45, y, "Pause/play");
+    // u8g2.drawStr(45, y, "Pause/play");
+    u8g2.drawPixel(10, 16);
+    u8g2.drawPixel(11, 17);
+    u8g2.drawPixel(12, 18);
+    u8g2.drawPixel(13, 19);
+    u8g2.drawPixel(14, 20);
+    u8g2.drawPixel(13, 21);
+    u8g2.drawPixel(12, 22);
+    u8g2.drawPixel(11, 23);
+    u8g2.drawPixel(10, 24);
+    u8g2.drawPixel(10, 17);
+    u8g2.drawPixel(10, 18);
+    u8g2.drawPixel(10, 19);
+    u8g2.drawPixel(10, 20);
+    u8g2.drawPixel(10, 21);
+    u8g2.drawPixel(10, 22);
+    u8g2.drawPixel(10, 23);
+
+    u8g2.drawPixel(11, 18);
+    u8g2.drawPixel(11, 19);
+    u8g2.drawPixel(11, 20);
+    u8g2.drawPixel(11, 21);
+    u8g2.drawPixel(11, 22);
+
+    u8g2.drawPixel(12, 19);
+    u8g2.drawPixel(12, 20);
+    u8g2.drawPixel(12, 21);
+
+    u8g2.drawPixel(13, 20);
+
+    u8g2.drawPixel(16, 23);
+    u8g2.drawPixel(17, 22);
+    u8g2.drawPixel(18, 21);
+    u8g2.drawPixel(19, 20);
+    u8g2.drawPixel(20, 19);
+    u8g2.drawPixel(21, 18);
+    u8g2.drawPixel(22, 17);
+    u8g2.drawPixel(23, 16);
+
+    for (size_t i = 25; i < 27; i++)
+    {
+      for (size_t j = 16; j < 24; j++)
+      {
+        u8g2.drawPixel(i, j);
+      }
+    }
+    for (size_t i = 29; i < 31; i++)
+    {
+      for (size_t j = 16; j < 24; j++)
+      {
+        u8g2.drawPixel(i, j);
+      }
+    }
+
     u8g2.setDrawColor(1); // восстановление цвета
     return 1;
   }
@@ -246,9 +325,9 @@ uint8_t dfp_stop(mui_t *ui, uint8_t msg)
 
     if (mui_IsCursorFocus(ui))
     {
-      u8g2.setDrawColor(1);             // белый фон
-      u8g2.drawBox(40, y - 10, 60, 12); // выделение
-      u8g2.setDrawColor(0);             // чёрный текст
+      u8g2.setDrawColor(1);            // белый фон
+      u8g2.drawBox(5, y - 10, 30, 12); // выделение
+      u8g2.setDrawColor(0);            // чёрный текст
     }
     else
     {
@@ -256,7 +335,8 @@ uint8_t dfp_stop(mui_t *ui, uint8_t msg)
     }
 
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(45, y, "Stop");
+    // u8g2.drawStr(45, y, "Stop");
+    u8g2.drawBox(15, 39, 10, 10);
     u8g2.setDrawColor(1); // восстановление цвета
     return 1;
   }
@@ -281,9 +361,9 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
 
     if (mui_IsCursorFocus(ui))
     {
-      u8g2.setDrawColor(1);            // белый фон
-      u8g2.drawBox(0, y - 10, 60, 12); // выделение
-      u8g2.setDrawColor(0);            // чёрный текст
+      u8g2.setDrawColor(1);             // белый фон
+      u8g2.drawBox(20, y - 10, 15, 12); // выделение
+      u8g2.setDrawColor(0);             // чёрный текст
     }
     else
     {
@@ -291,7 +371,45 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
     }
 
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(5, y, "Next");
+    // u8g2.drawStr(30, y, "Next");
+    u8g2.drawPixel(22, 27);
+    u8g2.drawPixel(23, 28);
+    u8g2.drawPixel(24, 29);
+    u8g2.drawPixel(25, 30);
+    u8g2.drawPixel(26, 31);
+    u8g2.drawPixel(25, 32);
+    u8g2.drawPixel(24, 33);
+    u8g2.drawPixel(23, 34);
+    u8g2.drawPixel(22, 35);
+
+    u8g2.drawPixel(22, 28);
+    u8g2.drawPixel(22, 29);
+    u8g2.drawPixel(22, 30);
+    u8g2.drawPixel(22, 31);
+    u8g2.drawPixel(22, 32);
+    u8g2.drawPixel(22, 33);
+    u8g2.drawPixel(22, 34);
+    u8g2.drawPixel(22, 35);
+
+    u8g2.drawPixel(27, 27);
+    u8g2.drawPixel(28, 28);
+    u8g2.drawPixel(29, 29);
+    u8g2.drawPixel(30, 30);
+    u8g2.drawPixel(31, 31);
+    u8g2.drawPixel(30, 32);
+    u8g2.drawPixel(29, 33);
+    u8g2.drawPixel(28, 34);
+    u8g2.drawPixel(27, 35);
+
+    u8g2.drawPixel(27, 28);
+    u8g2.drawPixel(27, 29);
+    u8g2.drawPixel(27, 30);
+    u8g2.drawPixel(27, 31);
+    u8g2.drawPixel(27, 32);
+    u8g2.drawPixel(27, 33);
+    u8g2.drawPixel(27, 34);
+    u8g2.drawPixel(27, 35);
+
     u8g2.setDrawColor(1); // восстановление цвета
     return 1;
   }
@@ -313,9 +431,9 @@ uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
 
     if (mui_IsCursorFocus(ui))
     {
-      u8g2.setDrawColor(1);             // белый фон
-      u8g2.drawBox(70, y - 10, 60, 12); // выделение
-      u8g2.setDrawColor(0);             // чёрный текст
+      u8g2.setDrawColor(1);            // белый фон
+      u8g2.drawBox(5, y - 10, 15, 12); // выделение
+      u8g2.setDrawColor(0);            // чёрный текст
     }
     else
     {
@@ -323,7 +441,40 @@ uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
     }
 
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(75, y, "Previous");
+    // u8g2.drawStr(75, y, "Previous");
+    u8g2.drawPixel(10, 27);
+    u8g2.drawPixel(9, 28);
+    u8g2.drawPixel(8, 29);
+    u8g2.drawPixel(7, 30);
+    u8g2.drawPixel(6, 31);
+    u8g2.drawPixel(7, 32);
+    u8g2.drawPixel(8, 33);
+    u8g2.drawPixel(9, 34);
+    u8g2.drawPixel(10, 35);
+    u8g2.drawPixel(10, 28);
+    u8g2.drawPixel(10, 29);
+    u8g2.drawPixel(10, 30);
+    u8g2.drawPixel(10, 31);
+    u8g2.drawPixel(10, 32);
+    u8g2.drawPixel(10, 33);
+    u8g2.drawPixel(10, 34);
+
+    u8g2.drawPixel(15, 27);
+    u8g2.drawPixel(14, 28);
+    u8g2.drawPixel(13, 29);
+    u8g2.drawPixel(12, 30);
+    u8g2.drawPixel(11, 31);
+    u8g2.drawPixel(12, 32);
+    u8g2.drawPixel(13, 33);
+    u8g2.drawPixel(14, 34);
+    u8g2.drawPixel(15, 35);
+    u8g2.drawPixel(15, 28);
+    u8g2.drawPixel(15, 29);
+    u8g2.drawPixel(15, 30);
+    u8g2.drawPixel(15, 31);
+    u8g2.drawPixel(15, 32);
+    u8g2.drawPixel(15, 33);
+    u8g2.drawPixel(15, 34);
     u8g2.setDrawColor(1); // восстановление цвета
     return 1;
   }
@@ -393,7 +544,7 @@ muif_t muif_list[] = {
     MUIF_VARIABLE("LP", &loop_set, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_VARIABLE("LA", &loop_all_set, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_VARIABLE("RA", &random_all_set, mui_u8g2_u8_chkbox_wm_pi),
-    MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mud_pi),
+    MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mse_pf),
     MUIF_VARIABLE("RT", &reset_dfp, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_U8G2_U16_LIST("EQ", &eq_index_set, NULL, equalizer_get_str, equalizer_get_cnt, mui_u8g2_u16_list_line_wa_mud_pi),
     MUIF_RO("CT", dfp_current_file),
@@ -408,8 +559,11 @@ muif_t muif_list[] = {
     /*Garage doors*/
     MUIF_BUTTON("OC", openCloseDoors),
 
+    /*Light control*/
+    MUIF_U8G2_U16_LIST("FL", &front_left, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+
     // MUIF_U8G2_U8_MIN_MAX("NV", &num_value, 0, 99, mui_u8g2_u8_min_max_wm_mse_pi),
-    // MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, mui_u8g2_u8_bar_wm_mse_pf),
+    // MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, ),
 
     MUIF_U8G2_U16_LIST("ID", &selection, NULL, menu_get_str, menu_get_cnt, mui_u8g2_u16_list_goto_w1_pi),
     /* register custom function to show the data */
@@ -536,11 +690,19 @@ fds_t fds_data[] =
             MUI_STYLE(0)
                 MUI_XY("PD", 10, 12)
                     MUI_XYAT("DP", 10, 24, 1, "Play/pause")
-                        MUI_XYAT("NT", 10, 36, 1, "Next")
-                            MUI_XYAT("PT", 10, 36, 1, "Previous")
+                        MUI_XYAT("PT", 10, 36, 1, "Previous")
+                            MUI_XYAT("NT", 10, 36, 1, "Next")
                                 MUI_XYAT("DS", 10, 48, 1, "Stop")
                                     MUI_XY("VS", 45, 60)
-                                        MUI_XY("CT", 10, 60);
+                                        MUI_XY("CT", 10, 60)
+    //
+    MUI_FORM(60)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Light controll")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_LABEL(1, 24, "Fr. left:")
+                            MUI_XYA("FL", 35, 24, 0);
 /*-------------------------*/
 
 unsigned long timerFreez;
@@ -553,6 +715,17 @@ char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursd
 String topicPath = "garage/main_controller/";
 const char *inTopic[] = {
     "garage/main_controller/dfplayer/",
+    "garage/light_controller/config/front_left",
+    "garage/light_controller/config/front_right",
+    "garage/light_controller/config/left_front",
+    "garage/light_controller/config/left_rear",
+    "garage/light_controller/config/right_front",
+    "garage/light_controller/config/right_rear",
+    "garage/light_controller/config/rear_left",
+    "garage/light_controller/config/rear_right",
+    "garage/light_controller/config/detection",
+    "garage/light_controller/config/allLightOn",
+    "garage/light_controller/config/resetLight",
 };
 
 String convertFloatToString(float value, int lenght)
@@ -695,6 +868,42 @@ void callbackMqtt(char *topic, byte *payload, unsigned int length)
   {
   case 0:
     saveConfig();
+    break;
+  case 1:
+    if (front_left != str.toInt())
+    {
+      mqttClient.publish("garage/light_controller/settings/front_left", String(front_left).c_str());
+    }
+    break;
+  case 2:
+    front_right = str.toInt();
+    break;
+  case 3:
+    left_front = str.toInt();
+    break;
+  case 4:
+    left_rear = str.toInt();
+    break;
+  case 5:
+    right_front = str.toInt();
+    break;
+  case 6:
+    right_rear = str.toInt();
+    break;
+  case 7:
+    rear_left = str.toInt();
+    break;
+  case 8:
+    rear_right = str.toInt();
+    break;
+  case 9:
+    light_detection = str.toInt();
+    break;
+  case 10:
+    all_light_on = str.toInt();
+    break;
+  case 11:
+    reset_light = str.toInt();
     break;
   default:
   {
@@ -1163,45 +1372,123 @@ void interruptRoutine()
 
 void handleGesture()
 {
+  int state = NAN;
   if (apds.isGestureAvailable())
   {
-    switch (apds.readGesture())
+    if (mui.getCurrentFormId() == 50)
     {
-    case DIR_UP:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
-      break;
-    case DIR_DOWN:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
-      break;
-    case DIR_LEFT:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
-      Serial.println("LEFT");
-      break;
-    case DIR_RIGHT:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
-      Serial.println("RIGHT");
-      break;
-    case DIR_NEAR:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
-      Serial.println("NEAR");
-      break;
-    case DIR_FAR:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
-      Serial.println("FAR");
-      break;
-    default:
-      mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
-      /*
-      To perform a NEAR gesture, hold your hand
-far above the sensor and move it close to the sensor (within 2
-inches). Hold your hand there for at least 1 second and move it
-away.
+      switch (apds.readGesture())
+      {
+      case DIR_UP:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
+        volume_set = myDFPlayer.readVolume() + 5;
+        myDFPlayer.volume((volume_set > 30) ? 30 : volume_set);
+        break;
+      case DIR_DOWN:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
+        volume_set = myDFPlayer.readVolume() - 5;
+        myDFPlayer.volume((volume_set) < 0 ? 0 : volume_set);
+        break;
+      case DIR_LEFT:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
+        myDFPlayer.next();
+        break;
+      case DIR_RIGHT:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
+        myDFPlayer.previous();
+        break;
+      case DIR_NEAR:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
+        break;
+      case DIR_FAR:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
+        state = myDFPlayer.readState();
+        if (state == 1)
+        {
+          // Serial.print("Track number: ");
+          // myDFPlayer.readCurrentFileNumber();
+          // last_play_track = myDFPlayer.readFileCounts();
+          saveDFPlayerConfig();
+          // delay(300);
+          myDFPlayer.stop();
+        }
+        else if (state == 0)
+        {
+          myDFPlayer.playMp3Folder(last_play_track);
+        }
+        break;
+      default:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
+        /*
+        To perform a NEAR gesture, hold your hand
+  far above the sensor and move it close to the sensor (within 2
+  inches). Hold your hand there for at least 1 second and move it
+  away.
 
-To perform a FAR gesture, hold your hand within 2 inches of the
-sensor for at least 1 second and then move it above (out of
-range) of the sensor.
-*/
+  To perform a FAR gesture, hold your hand within 2 inches of the
+  sensor for at least 1 second and then move it above (out of
+  range) of the sensor.
+  */
+      }
     }
+    if (mui.getCurrentFormId() == 60) // light controll
+    {
+      switch (apds.readGesture())
+      {
+      case DIR_UP:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
+        break;
+      case DIR_DOWN:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
+        break;
+      case DIR_LEFT:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
+        break;
+      case DIR_RIGHT:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
+        break;
+      case DIR_NEAR:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
+        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        break;
+      case DIR_FAR:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
+        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        break;
+      default:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
+      }
+    }
+    if (mainScreen[0]) // doors controll (general screen)
+    {
+      switch (apds.readGesture())
+      {
+      case DIR_UP:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
+        break;
+      case DIR_DOWN:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
+        break;
+      case DIR_LEFT:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
+        break;
+      case DIR_RIGHT:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
+        break;
+      case DIR_NEAR:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
+        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        break;
+      case DIR_FAR:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
+        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        break;
+      default:
+        mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
+      }
+    }
+    else
+      apds.readGesture();
   }
 }
 
@@ -1258,7 +1545,7 @@ void setup()
     Serial.println("Found UNKNOWN sensor! Error!");
   }
   pinMode(APDS9960_INT, INPUT);
-  attachInterrupt(0, interruptRoutine, FALLING);
+  attachInterrupt(APDS9960_INT, interruptRoutine, FALLING);
   if (apds.init())
   {
     Serial.println(F("APDS-9960 initialization complete"));
@@ -1355,6 +1642,7 @@ void setup()
   // Serial.println(myDFPlayer.readVolume());              // read current volume
   // Serial.println(myDFPlayer.readEQ());                  // read EQ setting
   myDFPlayer.readFileCounts();
+  delay(10);
   file_count = myDFPlayer.readFileCounts();
   // read all file counts in SD card
   // Serial.println(myDFPlayer.readCurrentFileNumber());   // read current play file number
@@ -1366,10 +1654,10 @@ void loop(void)
 {
   if (isr_flag == 1)
   {
-    detachInterrupt(0);
+    detachInterrupt(APDS9960_INT);
     handleGesture();
     isr_flag = 0;
-    attachInterrupt(0, interruptRoutine, FALLING);
+    attachInterrupt(APDS9960_INT, interruptRoutine, FALLING);
   }
   if (mui.isFormActive())
   {
@@ -1473,7 +1761,7 @@ void loop(void)
         mui.leaveForm();
         return;
       }
-      if (analogRead(joystikLeftRightPin) < 1000 && mui.getCurrentFormId() == 50)
+      if (analogRead(joystikLeftRightPin) < 1000 && mui.getCurrentFormId() == 60)
       {
         mainScreen[0] = 0;
         mainScreen[1] = 1;
@@ -1499,7 +1787,7 @@ void loop(void)
         }
       }
 
-      if (analogRead(joystikLeftRightPin) < 1000 && millis() - timerFreez > 300 && mui.getCurrentFormId() != 50)
+      if (analogRead(joystikLeftRightPin) < 1000 && millis() - timerFreez > 300)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
 
@@ -1526,7 +1814,7 @@ void loop(void)
         timerFreez = millis();
       }
 
-      if (analogRead(joystikLeftRightPin) > 3000 && millis() - timerFreez > 300 && mui.getCurrentFormId() != 50)
+      if (analogRead(joystikLeftRightPin) > 3000 && millis() - timerFreez > 300)
       {
         int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
 
@@ -1566,6 +1854,12 @@ void loop(void)
     is_redraw = true;
     timerFreez = millis();
   }
+  else if (!mui.isFormActive() && mainScreen[2])
+  {
+    mui.gotoForm(60, 0);
+    is_redraw = true;
+    timerFreez = millis();
+  }
 
   now = rtc.now();
   if (!mui.isFormActive())
@@ -1581,18 +1875,19 @@ void loop(void)
   if (mySwitch.available())
   {
     // Serial.println(mySwitch.getReceivedValue());
-    if (mySwitch.getReceivedValue() == 13675425)
+    if (mySwitch.getReceivedValue() == 13675425) // A
     {
       mqttClient.publish("garage/doors_controller/move_doors/move", "1");
     }
-    if (mySwitch.getReceivedValue() == 13675426)
+    if (mySwitch.getReceivedValue() == 13675426) // B
     {
     }
-    // A 13675425
-    // B 13675426
-
-    // C 13675428
-    // D 13675432
+    if (mySwitch.getReceivedValue() == 13675428) // C
+    {
+    }
+    if (mySwitch.getReceivedValue() == 13675432) // D
+    {
+    }
     mySwitch.resetAvailable();
   }
   if (strlen(configJson["mqtt_server"].as<const char *>()) > 0)
@@ -1642,7 +1937,8 @@ void loop(void)
       }
       mqttClient.publish((topicPath + "sensors/mq-135/gas").c_str(), String(analogRead(gas_sensor_pin)).c_str());
       printBME280Data();
-      if(analogRead(gas_sensor_pin)>3000||temp_inside>40){
+      if (analogRead(gas_sensor_pin) > 3000 || temp_inside > 40)
+      {
         mqttClient.publish((topicPath + "alert").c_str(), "1");
       }
       send_mqqt_timer = millis();
