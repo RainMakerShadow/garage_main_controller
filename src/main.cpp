@@ -1,6 +1,5 @@
 #include <U8g2lib.h>
 #include <MUIU8g2.h>
-// #include <SoftwareSerial.h>
 #include <RCSwitch.h>
 #include <Wire.h>
 #include "RTClib.h"
@@ -19,6 +18,9 @@
 #include <EnvironmentCalculations.h>
 #include <BME280I2C.h>
 #include <SparkFun_APDS9960.h>
+#include <dhtnew.h>
+#include "DHTesp.h"
+#include <Ticker.h>
 
 void saveDFPlayerConfig();
 
@@ -36,7 +38,19 @@ BME280I2C::Settings settings(
     BME280I2C::I2CAddr_0x76);
 
 BME280I2C bme(settings);
-
+DHTesp am2302;
+void tempTask(void *pvParameters);
+bool getTemperature();
+void triggerGetTemp();
+TaskHandle_t tempTaskHandle = NULL;
+/** Ticker for temperature reading */
+Ticker tempTicker;
+/** Comfort profile */
+ComfortState cf;
+/** Flag if task should run */
+bool tasksEnabled = false;
+/** Pin number for DHT11 data pin */
+int dhtPin = 27;
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 RTC_DS3231 rtc;
@@ -104,6 +118,7 @@ uint8_t year;
 const char *equalizer[] = {"Normal", "Pop", "Rock", "Jazz", "Classic", "Bass"};
 int last_play_track;
 uint16_t eq_index_set;
+uint16_t light_index_set;
 uint8_t volume_set;
 bool random_all_set;
 bool loop_set;
@@ -111,6 +126,8 @@ bool loop_all_set;
 bool reset_dfp;
 bool play_pause = false;
 int file_count;
+int rain_sensor = 0;
+int rain_sensor_pin = 36;
 
 /*display mui*/
 uint8_t num_value = 0;
@@ -121,16 +138,35 @@ unsigned long key_timer;
 unsigned long menu_show_timer;
 
 uint16_t front_left = 0;
-int front_right = NAN;
-int left_front = NAN;
-int left_rear = NAN;
-int rear_left = NAN;
-int right_front = NAN;
-int right_rear = NAN;
-int rear_right = NAN;
-int light_detection = NAN;
-int all_light_on = NAN;
-int reset_light = NAN;
+uint16_t front_right = 0;
+uint16_t left_front = 0;
+uint16_t left_rear = 0;
+uint16_t rear_left = 0;
+uint16_t right_front = 0;
+uint16_t right_rear = 0;
+uint16_t rear_right = 0;
+uint16_t light_detection = 0;
+uint16_t all_light_on = 0;
+uint16_t reset_light = 0;
+uint16_t tmp_front_left = 0;
+uint16_t tmp_front_right = 0;
+uint16_t tmp_left_front = 0;
+uint16_t tmp_left_rear = 0;
+uint16_t tmp_rear_left = 0;
+uint16_t tmp_right_front = 0;
+uint16_t tmp_right_rear = 0;
+uint16_t tmp_rear_right = 0;
+uint16_t tmp_light_detection = 0;
+uint16_t tmp_all_light_on = 0;
+uint16_t tmp_reset_light = 0;
+uint16_t rear_light = 0;
+uint16_t front_light = 0;
+uint16_t table_light = 0;
+int rear_light_pin = 0;
+int front_light_pin = 1;
+int speakers_pin = 2;
+int table_light_pin = 4;
+int player_status = 0;
 
 void printDate();
 uint16_t menu_get_cnt(void *data)
@@ -152,11 +188,21 @@ menu_get_str(void *data, uint16_t index)
   return dfp_menu[index];
 }
 uint16_t selection = 0;
+
 uint8_t mui_hrule(mui_t *ui, uint8_t msg)
 {
   if (msg == MUIF_MSG_DRAW)
   {
     u8g2.drawHLine(0, mui_get_y(ui), u8g2.getDisplayWidth());
+  }
+  return 0;
+}
+
+uint8_t mui_vrule(mui_t *ui, uint8_t msg)
+{
+  if (msg == MUIF_MSG_DRAW)
+  {
+    u8g2.drawVLine(64, mui_get_y(ui), u8g2.getDisplayHeight());
   }
   return 0;
 }
@@ -251,19 +297,15 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
     u8g2.drawPixel(10, 21);
     u8g2.drawPixel(10, 22);
     u8g2.drawPixel(10, 23);
-
     u8g2.drawPixel(11, 18);
     u8g2.drawPixel(11, 19);
     u8g2.drawPixel(11, 20);
     u8g2.drawPixel(11, 21);
     u8g2.drawPixel(11, 22);
-
     u8g2.drawPixel(12, 19);
     u8g2.drawPixel(12, 20);
     u8g2.drawPixel(12, 21);
-
     u8g2.drawPixel(13, 20);
-
     u8g2.drawPixel(16, 23);
     u8g2.drawPixel(17, 22);
     u8g2.drawPixel(18, 21);
@@ -294,8 +336,8 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
 
   else if (msg == MUIF_MSG_CURSOR_SELECT)
   {
-    int state = myDFPlayer.readState();
-    if (state == 1)
+    player_status = myDFPlayer.readState();
+    if (player_status == 1)
     {
       // Serial.print("Track number: ");
       // myDFPlayer.readCurrentFileNumber();
@@ -303,14 +345,17 @@ uint8_t dfp_play_pause(mui_t *ui, uint8_t msg)
       saveDFPlayerConfig();
       // delay(300);
       myDFPlayer.pause();
+      // PCFRelay.write(speakers_pin, 1);
     }
-    else if (state == 2)
+    else if (player_status == 2)
     {
       myDFPlayer.start();
+      // PCFRelay.write(speakers_pin, 0);
     }
-    else if (state == 0)
+    else if (player_status == 0)
     {
       myDFPlayer.playMp3Folder(last_play_track);
+      // PCFRelay.write(speakers_pin, 0);
     }
     return 1;
   }
@@ -353,6 +398,7 @@ uint8_t dfp_stop(mui_t *ui, uint8_t msg)
   }
   return 0;
 }
+
 uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
 {
   if (msg == MUIF_MSG_DRAW)
@@ -381,7 +427,6 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
     u8g2.drawPixel(24, 33);
     u8g2.drawPixel(23, 34);
     u8g2.drawPixel(22, 35);
-
     u8g2.drawPixel(22, 28);
     u8g2.drawPixel(22, 29);
     u8g2.drawPixel(22, 30);
@@ -390,7 +435,6 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
     u8g2.drawPixel(22, 33);
     u8g2.drawPixel(22, 34);
     u8g2.drawPixel(22, 35);
-
     u8g2.drawPixel(27, 27);
     u8g2.drawPixel(28, 28);
     u8g2.drawPixel(29, 29);
@@ -400,7 +444,6 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
     u8g2.drawPixel(29, 33);
     u8g2.drawPixel(28, 34);
     u8g2.drawPixel(27, 35);
-
     u8g2.drawPixel(27, 28);
     u8g2.drawPixel(27, 29);
     u8g2.drawPixel(27, 30);
@@ -423,6 +466,7 @@ uint8_t dfp_next_track(mui_t *ui, uint8_t msg)
   }
   return 0;
 }
+
 uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
 {
   if (msg == MUIF_MSG_DRAW)
@@ -458,7 +502,6 @@ uint8_t dfp_previous_track(mui_t *ui, uint8_t msg)
     u8g2.drawPixel(10, 32);
     u8g2.drawPixel(10, 33);
     u8g2.drawPixel(10, 34);
-
     u8g2.drawPixel(15, 27);
     u8g2.drawPixel(14, 28);
     u8g2.drawPixel(13, 29);
@@ -522,12 +565,29 @@ uint8_t print_date(mui_t *ui, uint8_t msg)
   return 0;
 }
 
+uint16_t light_menu_get_cnt(void *data)
+{
+  return 5; /* number of menu entries */
+}
+
+const char *
+light_menu_get_str(void *data, uint16_t index)
+{
+  static const char *light_menu[] = {
+      MUI_31 "General light",
+      MUI_32 "Additional light",
+  };
+  return light_menu[index];
+}
+uint16_t light_menu_selection = 0;
+
 muif_t muif_list[] = {
     MUIF_U8G2_FONT_STYLE(0, u8g2_font_helvR08_tr), /* regular font */
     MUIF_U8G2_FONT_STYLE(1, u8g2_font_helvB08_tr), /* bold font */
     MUIF_U8G2_FONT_STYLE(2, u8g2_font_8x13_tr),    /* bold font */
 
     MUIF_RO("HR", mui_hrule),
+    MUIF_RO("VR", mui_vrule),
     MUIF_U8G2_LABEL(),
     MUIF_RO("GP", mui_u8g2_goto_data),
     MUIF_BUTTON("GC", mui_u8g2_goto_form_w1_pi),
@@ -544,9 +604,10 @@ muif_t muif_list[] = {
     MUIF_VARIABLE("LP", &loop_set, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_VARIABLE("LA", &loop_all_set, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_VARIABLE("RA", &random_all_set, mui_u8g2_u8_chkbox_wm_pi),
-    MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mse_pf),
+    MUIF_U8G2_U8_MIN_MAX_STEP("VS", &volume_set, 0, 30, 2, MUI_MMS_2X_BAR | MUI_MMS_SHOW_VALUE, mui_u8g2_u8_bar_wm_mud_pf),
     MUIF_VARIABLE("RT", &reset_dfp, mui_u8g2_u8_chkbox_wm_pi),
     MUIF_U8G2_U16_LIST("EQ", &eq_index_set, NULL, equalizer_get_str, equalizer_get_cnt, mui_u8g2_u16_list_line_wa_mud_pi),
+
     MUIF_RO("CT", dfp_current_file),
 
     /*DFPlayer*/
@@ -561,8 +622,20 @@ muif_t muif_list[] = {
 
     /*Light control*/
     MUIF_U8G2_U16_LIST("FL", &front_left, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
-
-    // MUIF_U8G2_U8_MIN_MAX("NV", &num_value, 0, 99, mui_u8g2_u8_min_max_wm_mse_pi),
+    MUIF_U8G2_U16_LIST("LF", &left_front, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("LR", &left_rear, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("RL", &rear_left, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("FR", &front_right, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("RF", &right_front, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("RR", &right_rear, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("RQ", &rear_right, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("LD", &light_detection, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("LS", &all_light_on, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("RS", &reset_light, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("MF", &front_light, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("MR", &rear_light, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("TL", &table_light, NULL, light_status_get_str, light_status_get_cnt, mui_u8g2_u16_list_line_wa_mse_pi),
+    MUIF_U8G2_U16_LIST("LC", &light_menu_selection, NULL, light_menu_get_str, light_menu_get_cnt, mui_u8g2_u16_list_goto_w1_pi),
     // MUIF_U8G2_U8_MIN_MAX_STEP("NB", &bar_value, 0, 16, 1, MUI_MMS_2X_BAR, ),
 
     MUIF_U8G2_U16_LIST("ID", &selection, NULL, menu_get_str, menu_get_cnt, mui_u8g2_u16_list_goto_w1_pi),
@@ -580,7 +653,7 @@ fds_t fds_data[] =
                 MUI_STYLE(0)
                     MUI_XY("HR", 0, 11)
                         MUI_DATA("GP",
-                                 MUI_10 "Clock|" MUI_20 "Player|" MUI_30 "Light|" MUI_40 "Open/Close doors")
+                                 MUI_10 "Clock|" MUI_20 "Player|" MUI_30 "Light|" MUI_70 "Relay|" MUI_40 "Open/Close doors")
                             MUI_XYA("GC", 5, 24, 0)
                                 MUI_XYA("GC", 5, 36, 1)
                                     MUI_XYA("GC", 5, 48, 2)
@@ -676,6 +749,38 @@ fds_t fds_data[] =
                         MUI_XYAT("RT", 1, 24, 1, "Reset")
                             MUI_XYAT("GO", 114, 60, 20, " Ok ")
     //
+    MUI_FORM(30)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Light control")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_XYA("LC", 5, 24, 0)
+                            MUI_XYA("LC", 5, 36, 1)
+    //
+    MUI_FORM(31)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "General light")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_LABEL(5, 24, "All lights ON:")
+                            MUI_XYA("LS", 100, 24, 0)
+                                MUI_LABEL(5, 36, "Light detection:")
+                                    MUI_XYA("LD", 100, 36, 0)
+                                        MUI_LABEL(5, 48, "Reset:")
+                                            MUI_XYA("RS", 100, 48, 0)
+    //
+    MUI_FORM(32)
+        MUI_STYLE(1)
+            MUI_LABEL(5, 8, "Additional light")
+                MUI_XY("HR", 0, 11)
+                    MUI_STYLE(0)
+                        MUI_LABEL(5, 24, "Front light:")
+                            MUI_XYA("MF", 100, 24, 0)
+                                MUI_LABEL(5, 36, "Rear light:")
+                                    MUI_XYA("MR", 100, 36, 0)
+                                        MUI_LABEL(5, 48, "Table light:")
+                                            MUI_XYA("TL", 100, 48, 0)
+    //
     MUI_FORM(40)
         MUI_STYLE(1)
             MUI_LABEL(5, 8, "Garage doors")
@@ -698,21 +803,39 @@ fds_t fds_data[] =
     //
     MUI_FORM(60)
         MUI_STYLE(1)
-            MUI_LABEL(5, 8, "Light controll")
-                MUI_XY("HR", 0, 11)
-                    MUI_STYLE(0)
-                        MUI_LABEL(1, 24, "Fr. left:")
-                            MUI_XYA("FL", 35, 24, 0);
+            MUI_LABEL(1, 9, "Left")
+                MUI_LABEL(63, 8, "|")
+                    MUI_LABEL(66, 9, "Right")
+                        MUI_XY("HR", 0, 12)
+    // MUI_XY("HR", 0, 27)
+    MUI_XY("VR", 64, 0)
+        MUI_STYLE(0)
+            MUI_LABEL(1, 24, "FL:")
+                MUI_XYA("FL", 20, 24, 0)
+                    MUI_LABEL(1, 37, "LF:")
+                        MUI_XYA("LF", 20, 37, 0)
+                            MUI_LABEL(1, 50, "LR:")
+                                MUI_XYA("LR", 20, 50, 0)
+                                    MUI_LABEL(1, 63, "RR:")
+                                        MUI_XYA("RL", 20, 63, 0)
+    //
+    MUI_LABEL(66, 24, "FR:")
+        MUI_XYA("FR", 85, 24, 0)
+            MUI_LABEL(66, 37, "RF:")
+                MUI_XYA("RF", 85, 37, 0)
+                    MUI_LABEL(66, 50, "RR:")
+                        MUI_XYA("RR", 85, 50, 0)
+                            MUI_LABEL(66, 63, "RR:")
+                                MUI_XYA("RQ", 85, 63, 0);
+
 /*-------------------------*/
 
 unsigned long timerFreez;
-int mainScreen[] = {1, 0, 0};
 void generalScreen();
-void playerScreen();
-void lightsInfo();
-void (*generalScreenFuncs[])() = {generalScreen, playerScreen, lightsInfo};
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 String topicPath = "garage/main_controller/";
+bool radar_light_controller = false;
+bool radar = false;
 const char *inTopic[] = {
     "garage/main_controller/dfplayer/",
     "garage/light_controller/config/front_left",
@@ -726,6 +849,7 @@ const char *inTopic[] = {
     "garage/light_controller/config/detection",
     "garage/light_controller/config/allLightOn",
     "garage/light_controller/config/resetLight",
+    "garage/light_controller/target/Valid",
 };
 
 String convertFloatToString(float value, int lenght)
@@ -810,6 +934,10 @@ void loadDFPlayerConfig()
     delay(100);
     myDFPlayer.EQ(eq_index_set);
     delay(100);
+    if (random_all_set)
+    {
+      myDFPlayer.randomAll();
+    }
   }
 }
 
@@ -870,40 +998,146 @@ void callbackMqtt(char *topic, byte *payload, unsigned int length)
     saveConfig();
     break;
   case 1:
-    if (front_left != str.toInt())
+    if (front_left != str.toInt() && tmp_front_left != str.toInt())
+    {
+      front_left = str.toInt();
+      tmp_front_left = front_left;
+    }
+    else if (front_left != str.toInt() && front_left != tmp_front_left)
     {
       mqttClient.publish("garage/light_controller/settings/front_left", String(front_left).c_str());
+      tmp_front_left = front_left;
     }
     break;
   case 2:
-    front_right = str.toInt();
+    if (front_right != str.toInt() && tmp_front_right != str.toInt())
+    {
+      front_right = str.toInt();
+      tmp_front_right = front_right;
+    }
+    else if (front_right != str.toInt() && front_right != tmp_front_right)
+    {
+      mqttClient.publish("garage/light_controller/settings/front_right", String(front_right).c_str());
+      tmp_front_right = front_right;
+    }
     break;
   case 3:
-    left_front = str.toInt();
+    if (left_front != str.toInt() && tmp_left_front != str.toInt())
+    {
+      left_front = str.toInt();
+      tmp_left_front = left_front;
+    }
+    else if (left_front != str.toInt() && left_front != tmp_left_front)
+    {
+      mqttClient.publish("garage/light_controller/settings/left_front", String(left_front).c_str());
+      tmp_left_front = left_front;
+    }
     break;
   case 4:
-    left_rear = str.toInt();
+    if (left_rear != str.toInt() && tmp_left_rear != str.toInt())
+    {
+      left_rear = str.toInt();
+      tmp_left_rear = left_rear;
+    }
+    else if (left_rear != str.toInt() && left_rear != tmp_left_rear)
+    {
+      mqttClient.publish("garage/light_controller/settings/left_rear", String(left_rear).c_str());
+      tmp_left_rear = left_rear;
+    }
     break;
   case 5:
-    right_front = str.toInt();
+    if (right_front != str.toInt() && tmp_right_front != str.toInt())
+    {
+      right_front = str.toInt();
+      tmp_right_front = right_front;
+    }
+    else if (right_front != str.toInt() && right_front != tmp_right_front)
+    {
+      mqttClient.publish("garage/light_controller/settings/right_front", String(right_front).c_str());
+      tmp_right_front = right_front;
+    }
     break;
   case 6:
-    right_rear = str.toInt();
+    if (right_rear != str.toInt() && tmp_right_rear != str.toInt())
+    {
+      right_front = str.toInt();
+      tmp_right_rear = right_front;
+    }
+    else if (right_rear != str.toInt() && right_rear != tmp_right_rear)
+    {
+      mqttClient.publish("garage/light_controller/settings/right_rear", String(right_rear).c_str());
+      tmp_right_rear = right_rear;
+    }
     break;
   case 7:
-    rear_left = str.toInt();
+    if (rear_left != str.toInt() && tmp_rear_left != str.toInt())
+    {
+      rear_left = str.toInt();
+      tmp_rear_left = rear_left;
+    }
+    else if (rear_left != str.toInt() && rear_left != tmp_rear_left)
+    {
+      mqttClient.publish("garage/light_controller/settings/rear_left", String(rear_left).c_str());
+      tmp_rear_left = rear_left;
+    }
     break;
   case 8:
-    rear_right = str.toInt();
+    if (rear_right != str.toInt() && tmp_rear_right != str.toInt())
+    {
+      rear_right = str.toInt();
+      tmp_rear_right = rear_right;
+    }
+    else if (rear_right != str.toInt() && rear_right != tmp_rear_right)
+    {
+      mqttClient.publish("garage/light_controller/settings/rear_right", String(rear_right).c_str());
+      tmp_rear_right = rear_right;
+    }
     break;
   case 9:
-    light_detection = str.toInt();
+    if (light_detection != str.toInt() && tmp_light_detection != str.toInt())
+    {
+      light_detection = str.toInt();
+      tmp_light_detection = light_detection;
+    }
+    else if (light_detection != str.toInt() && light_detection != tmp_light_detection)
+    {
+      mqttClient.publish("garage/light_controller/settings/detection", String(light_detection).c_str());
+      tmp_light_detection = light_detection;
+    }
     break;
   case 10:
-    all_light_on = str.toInt();
+    if (all_light_on != str.toInt() && tmp_all_light_on != str.toInt())
+    {
+      all_light_on = str.toInt();
+      tmp_all_light_on = all_light_on;
+    }
+    else if (all_light_on != str.toInt() && all_light_on != tmp_all_light_on)
+    {
+      mqttClient.publish("garage/light_controller/settings/allLightOn", String(all_light_on).c_str());
+      tmp_all_light_on = all_light_on;
+    }
     break;
   case 11:
-    reset_light = str.toInt();
+    if (reset_light != str.toInt() && tmp_reset_light != str.toInt())
+    {
+      reset_light = str.toInt();
+      tmp_reset_light = reset_light;
+    }
+    else if (reset_light != str.toInt() && reset_light != tmp_reset_light)
+    {
+      mqttClient.publish("garage/light_controller/settings/resetLight", String(reset_light).c_str());
+      tmp_reset_light = reset_light;
+    }
+    break;
+  case 12:
+    if (str)
+    {
+      radar_light_controller = true;
+    }
+    else
+    {
+      radar_light_controller = false;
+    }
     break;
   default:
   {
@@ -1365,6 +1599,74 @@ void printBME280Data()
   ;
 }
 
+bool initTemp() {
+  byte resultValue = 0;
+  // Initialize temperature sensor
+  am2302.setup(dhtPin, DHTesp::DHT11);
+  //Serial.println("DHT initiated");
+
+  // Start task to get temperature
+  xTaskCreatePinnedToCore(
+      tempTask,                       /* Function to implement the task */
+      "tempTask ",                    /* Name of the task */
+      4000,                           /* Stack size in words */
+      NULL,                           /* Task input parameter */
+      5,                              /* Priority of the task */
+      &tempTaskHandle,                /* Task handle. */
+      1);                             /* Core where the task should run */
+
+  if (tempTaskHandle == NULL) {
+    //Serial.println("Failed to start task for temperature update");
+    return false;
+  } else {
+    // Start update of environment data every 20 seconds
+    tempTicker.attach(20, triggerGetTemp);
+  }
+  return true;
+}
+
+void triggerGetTemp() {
+  if (tempTaskHandle != NULL) {
+     xTaskResumeFromISR(tempTaskHandle);
+  }
+}
+
+void tempTask(void *pvParameters) {
+  Serial.println("tempTask loop started");
+  while (1) // tempTask loop
+  {
+    if (tasksEnabled) {
+      // Get temperature values
+      getTemperature();
+    }
+    // Got sleep again
+    vTaskSuspend(NULL);
+  }
+}
+
+bool getTemperature() {
+  // Reading temperature for humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
+  TempAndHumidity newValues = am2302.getTempAndHumidity();
+  // Check if any reads failed and exit early (to try again).
+  if (am2302.getStatus() != 0)
+  {
+    //Serial.println("DHT11 error status: " + String(am2302.getStatusString()));
+    return false;
+  }
+
+  float heatIndex = am2302.computeHeatIndex(newValues.temperature, newValues.humidity);
+  float dewPoint = am2302.computeDewPoint(newValues.temperature, newValues.humidity);
+  float cr = am2302.getComfortRatio(cf, newValues.temperature, newValues.humidity);
+  humidity = newValues.humidity;
+  temp_outside = newValues.temperature;
+  mqttClient.publish((topicPath + "sensors/AM2301/humidity").c_str(), String(humidity).c_str());
+  mqttClient.publish((topicPath + "sensors/AM2301/temperature").c_str(), String(temp_outside).c_str());
+
+  Serial.println(" T:" + String(newValues.temperature) + " H:" + String(newValues.humidity) + " I:" + String(heatIndex) + " D:" + String(dewPoint) );
+  return true;
+}
+
 void interruptRoutine()
 {
   isr_flag = 1;
@@ -1381,21 +1683,25 @@ void handleGesture()
       {
       case DIR_UP:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
-        volume_set = myDFPlayer.readVolume() + 5;
+        volume_set = myDFPlayer.readVolume() + 2;
         myDFPlayer.volume((volume_set > 30) ? 30 : volume_set);
+        delay(100);
         break;
       case DIR_DOWN:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
-        volume_set = myDFPlayer.readVolume() - 5;
-        myDFPlayer.volume((volume_set) < 0 ? 0 : volume_set);
+        volume_set = myDFPlayer.readVolume() - 2;
+        myDFPlayer.volume(((volume_set) < 0) ? 0 : volume_set);
+        delay(100);
         break;
       case DIR_LEFT:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
         myDFPlayer.next();
+        delay(100);
         break;
       case DIR_RIGHT:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
         myDFPlayer.previous();
+        delay(100);
         break;
       case DIR_NEAR:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
@@ -1403,6 +1709,7 @@ void handleGesture()
       case DIR_FAR:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
         state = myDFPlayer.readState();
+        delay(100);
         if (state == 1)
         {
           // Serial.print("Track number: ");
@@ -1411,24 +1718,16 @@ void handleGesture()
           saveDFPlayerConfig();
           // delay(300);
           myDFPlayer.stop();
+          delay(100);
         }
         else if (state == 0)
         {
           myDFPlayer.playMp3Folder(last_play_track);
+          delay(100);
         }
         break;
       default:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
-        /*
-        To perform a NEAR gesture, hold your hand
-  far above the sensor and move it close to the sensor (within 2
-  inches). Hold your hand there for at least 1 second and move it
-  away.
-
-  To perform a FAR gesture, hold your hand within 2 inches of the
-  sensor for at least 1 second and then move it above (out of
-  range) of the sensor.
-  */
       }
     }
     if (mui.getCurrentFormId() == 60) // light controll
@@ -1449,39 +1748,43 @@ void handleGesture()
         break;
       case DIR_NEAR:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
-        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
         break;
       case DIR_FAR:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
-        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
         break;
       default:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
       }
     }
-    if (mainScreen[0]) // doors controll (general screen)
+    if (!mui.isFormActive()) // doors controll (general screen)
     {
       switch (apds.readGesture())
       {
       case DIR_UP:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "UP");
+        front_light = 0;
         break;
       case DIR_DOWN:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "DOWN");
+        front_light = 1;
         break;
       case DIR_LEFT:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "LEFT");
+        rear_light = 0;
         break;
       case DIR_RIGHT:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "RIGHT");
+        rear_light = 1;
         break;
       case DIR_NEAR:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NEAR");
-        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        // mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        myDFPlayer.stop();
         break;
       case DIR_FAR:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "FAR");
-        mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        // mqttClient.publish("garage/doors_controller/move_doors/move", "1");
+        myDFPlayer.stop();
         break;
       default:
         mqttClient.publish((topicPath + "sensors/gesture/move").c_str(), "NONE");
@@ -1498,7 +1801,7 @@ void setup()
   FPSerial.begin(9600);
   if (!LittleFS.begin())
   {
-    // Serial.println("LittleFS mount failed!");
+    Serial.println("LittleFS mount failed!");
   }
   loadConfig();
   connectWiFi(configJson["wifi_mode"].as<int>());
@@ -1528,6 +1831,8 @@ void setup()
   pinMode(35, INPUT);
   pinMode(13, INPUT);
   pinMode(gas_sensor_pin, INPUT);
+  initTemp();
+  tasksEnabled = true;
   while (!bme.begin())
   {
     Serial.println("Could not find BME280 sensor!");
@@ -1580,14 +1885,6 @@ void setup()
   // myDFPlayer.volumeUp();   // Volume Up
   // myDFPlayer.volumeDown(); // Volume Down
 
-  //----Set different EQ----
-  //  myDFPlayer.EQ(DFPLAYER_EQ_NORMAL);
-  //  myDFPlayer.EQ(DFPLAYER_EQ_POP);
-  //  myDFPlayer.EQ(DFPLAYER_EQ_ROCK);
-  //  myDFPlayer.EQ(DFPLAYER_EQ_JAZZ);
-  //  myDFPlayer.EQ(DFPLAYER_EQ_CLASSIC);
-  //  myDFPlayer.EQ(DFPLAYER_EQ_BASS);
-
   //----Set device we use SD as default----
   //  myDFPlayer.outputDevice(DFPLAYER_DEVICE_U_DISK);
   myDFPlayer.outputDevice(DFPLAYER_DEVICE_SD);
@@ -1623,7 +1920,7 @@ void setup()
   // myDFPlayer.playMp3Folder(4); // play specific mp3 in SD:/MP3/0004.mp3; File Name(0~65535)
   // delay(1000);
   // myDFPlayer.advertise(3); // advertise specific mp3 in SD:/ADVERT/0003.mp3; File Name(0~65535)
-  // delay(1000);
+  // delay(1000);myDFPlayer.readState()
   // myDFPlayer.stopAdvertise(); // stop advertise
   // delay(1000);
   // myDFPlayer.playLargeFolder(2, 999); // play specific mp3 in SD:/02/004.mp3; Folder Name(1~10); File Name(1~1000)
@@ -1649,6 +1946,7 @@ void setup()
   // Serial.println(myDFPlayer.readFileCountsInFolder(3)); // read file counts in folder SD:/03
   Serial.end();
   ld2450.begin(Serial, false);
+  delay(2000);
 }
 void loop(void)
 {
@@ -1674,9 +1972,9 @@ void loop(void)
       {
         is_redraw = 0; /* clear the redraw flag */
       }
+      // is_redraw = 0; /* clear the redraw flag */
       menu_show_timer = millis();
     }
-
     if (millis() - menu_show_timer > 30000)
     { // exit menu if timeout 30 sec
       mui.leaveForm();
@@ -1719,11 +2017,12 @@ void loop(void)
           is_redraw = 1;
         }
       }
-      if (!PCFKeyboard.read(1))
+      if (!PCFKeyboard.read(1) && mui.getCurrentFormId() < 50)
       { // Home
         if (mui.getCurrentFormId() == 1)
         { // Exit from menu
           mui.leaveForm();
+          timerFreez = millis();
           return;
         }
         else
@@ -1753,20 +2052,16 @@ void loop(void)
           is_redraw = 1;
         }
       }
-      if (analogRead(joystikLeftRightPin) > 3000 && mui.getCurrentFormId() == 50)
+      if (!PCFKeyboard.read(1) && mui.getCurrentFormId() == 50)
       {
-        mainScreen[0] = 0;
-        mainScreen[1] = 0;
-        mainScreen[2] = 1;
         mui.leaveForm();
+        timerFreez = millis();
         return;
       }
-      if (analogRead(joystikLeftRightPin) < 1000 && mui.getCurrentFormId() == 60)
+      if (!PCFKeyboard.read(0) && mui.getCurrentFormId() == 60)
       {
-        mainScreen[0] = 0;
-        mainScreen[1] = 1;
-        mainScreen[2] = 0;
         mui.leaveForm();
+        timerFreez = millis();
         return;
       }
       timerFreez = millis();
@@ -1774,93 +2069,28 @@ void loop(void)
   }
   else
   {
-    if (mainScreen[0] || mainScreen[1] || mainScreen[2])
+    if (!PCFKeyboard.read(0) && millis() - timerFreez > 300)
     {
-
-      for (size_t i = 0; i < sizeof(mainScreen) / sizeof(mainScreen[0]); i++)
-      {
-        if (mainScreen[i])
-        {
-          if (i == 0)
-            generalScreenFuncs[i]();
-          break;
-        }
-      }
-
-      if (analogRead(joystikLeftRightPin) < 1000 && millis() - timerFreez > 300)
-      {
-        int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
-
-        for (size_t i = 0; i < count; i++)
-        {
-
-          if (mainScreen[i])
-          {
-
-            if (i)
-            {
-              mainScreen[i - 1] = 1;
-              mainScreen[i] = 0;
-            }
-
-            else
-            {
-              mainScreen[count - 1] = 1;
-              mainScreen[i] = 0;
-            }
-            break;
-          }
-        }
-        timerFreez = millis();
-      }
-
-      if (analogRead(joystikLeftRightPin) > 3000 && millis() - timerFreez > 300)
-      {
-        int count = sizeof(mainScreen) / sizeof(mainScreen[0]);
-
-        for (size_t i = 0; i < count; i++)
-        {
-
-          if (mainScreen[i])
-          {
-
-            if ((i < count - 1))
-            {
-              mainScreen[i + 1] = 1;
-              mainScreen[i] = 0;
-            }
-
-            else
-            {
-              mainScreen[i - i] = 1;
-              mainScreen[i] = 0;
-            }
-            break;
-          }
-        }
-        timerFreez = millis();
-      }
+      mui.gotoForm(50, 0);
+      is_redraw = true;
+      timerFreez = millis();
+      return;
     }
+    if (!PCFKeyboard.read(1) && millis() - timerFreez > 300)
+    {
+      mui.gotoForm(60, 0);
+      is_redraw = true;
+      timerFreez = millis();
+      return;
+    }
+    generalScreen();
   }
-  if (!mui.isFormActive() && !PCFKeyboard.read(7) && mainScreen[0])
+  if (!mui.isFormActive() && !PCFKeyboard.read(7))
   { // open menu
     mui.gotoForm(1, 0);
     is_redraw = true;
     timerFreez = millis();
   }
-  else if (!mui.isFormActive() && mainScreen[1])
-  {
-    mui.gotoForm(50, 0);
-    is_redraw = true;
-    timerFreez = millis();
-  }
-  else if (!mui.isFormActive() && mainScreen[2])
-  {
-    mui.gotoForm(60, 0);
-    is_redraw = true;
-    timerFreez = millis();
-  }
-
   now = rtc.now();
   if (!mui.isFormActive())
   {
@@ -1874,7 +2104,6 @@ void loop(void)
 
   if (mySwitch.available())
   {
-    // Serial.println(mySwitch.getReceivedValue());
     if (mySwitch.getReceivedValue() == 13675425) // A
     {
       mqttClient.publish("garage/doors_controller/move_doors/move", "1");
@@ -1911,6 +2140,15 @@ void loop(void)
         snprintf(ipStr, sizeof(ipStr), "%s", WiFi.localIP().toString().c_str());
         mqttClient.publish(topic_buffer, ipStr);
       }
+      if (!tasksEnabled)
+      {
+        tasksEnabled = true;
+        if (tempTaskHandle != NULL)
+        {
+          vTaskResume(tempTaskHandle);
+        }
+      }
+      yield();
     }
     if (millis() - send_mqqt_timer > 1000)
     {
@@ -1925,6 +2163,7 @@ void loop(void)
           const LD2450::RadarTarget result_target = ld2450.getTarget(i);
           if (result_target.valid)
           {
+            radar = true;
             mqttClient.publish("garage/radar/value", "1");
             mqttClient.publish(String("garage/radar/targets/").c_str(), ld2450.getLastTargetMessage().c_str());
             valid = 1;
@@ -1932,48 +2171,52 @@ void loop(void)
         }
         if (!valid)
         {
+          radar = false;
           mqttClient.publish("garage/radar/value", "0");
         }
       }
+      player_status = myDFPlayer.readState();
+      mqttClient.publish((topicPath + "relay_status/front_light").c_str(), String(PCFRelay.read(front_light_pin)).c_str());
+      mqttClient.publish((topicPath + "relay_status/rear_light").c_str(), String(PCFRelay.read(rear_light_pin)).c_str());
+      mqttClient.publish((topicPath + "relay_status/table_light").c_str(), String(PCFRelay.read(table_light_pin)).c_str());
+      mqttClient.publish((topicPath + "relay_status/speakers").c_str(), String(PCFRelay.read(speakers_pin)).c_str());
+      mqttClient.publish((topicPath + "relay_status/player").c_str(), String(player_status).c_str());
+      mqttClient.publish((topicPath + "light/config/front_light").c_str(), String(front_light).c_str());
+      mqttClient.publish((topicPath + "light/config/rear_light").c_str(), String(rear_light).c_str());
+      mqttClient.publish((topicPath + "light/config/table_light").c_str(), String(table_light).c_str());
       mqttClient.publish((topicPath + "sensors/mq-135/gas").c_str(), String(analogRead(gas_sensor_pin)).c_str());
+      mqttClient.publish((topicPath + "sensors/rain_sensor/humidity").c_str(), String(analogRead(rain_sensor_pin)).c_str());
       printBME280Data();
       if (analogRead(gas_sensor_pin) > 3000 || temp_inside > 40)
       {
         mqttClient.publish((topicPath + "alert").c_str(), "1");
+      }
+      else
+      {
+        mqttClient.publish((topicPath + "alert").c_str(), "0");
       }
       send_mqqt_timer = millis();
     }
   }
   server.handleClient();
   requireChangeSetDFP();
-  // for (size_t i = 0; i < 8; i++)
-  // {
-  //   if (!PCFKeyboard.readButton(i) && i != 3)
-  //     Serial.println(i);
-  // }
-  // if (millis() - read_joystik_timer > 1000)
-  // {
-  //   Serial.println("-----------------------");
-  //   Serial.print("33:");
-  //   Serial.println(analogRead(33));
-  //   Serial.println("-----------------------");
-  //   Serial.print("35:");
-  //   Serial.println(analogRead(35));
-  //   Serial.println("************************");
-  //   read_joystik_timer = millis();
-  // }
-  // static unsigned long timer = millis();
-
   if (millis() - timer_save_last_track > 2000)
   {
     int state = myDFPlayer.readState();
+    delay(50);
     if (state == 1)
     {
       myDFPlayer.readCurrentFileNumber();
+      delay(50);
       // last_play_track = myDFPlayer.readCurrentFileNumber();
       last_play_track = myDFPlayer.readFileCounts();
+      delay(50);
+      PCFRelay.write(speakers_pin, 0);
     }
-
+    else
+    {
+      PCFRelay.write(speakers_pin, 1);
+    }
     timer_save_last_track = millis();
   }
   if (myDFPlayer.available())
@@ -1985,6 +2228,60 @@ void loop(void)
     myDFPlayer.reset();
     reset_dfp = 0;
     ESP.restart();
+  }
+  if (front_light)
+  {
+    if ((radar || radar_light_controller))
+    {
+      PCFRelay.write(front_light_pin, 0);
+    }
+    else
+    {
+      PCFRelay.write(front_light_pin, 1);
+    }
+  }
+  else
+  {
+    PCFRelay.write(front_light_pin, 1);
+  }
+  if (rear_light)
+  {
+    if (radar || radar_light_controller)
+    {
+      PCFRelay.write(rear_light_pin, 0);
+    }
+    else
+    {
+      PCFRelay.write(rear_light_pin, 1);
+    }
+  }
+  else
+  {
+    PCFRelay.write(rear_light_pin, 1);
+  }
+  (table_light) ? ((radar || radar_light_controller) ? PCFRelay.write(table_light_pin, 0) : PCFRelay.write(table_light_pin, 1)) : PCFRelay.write(table_light_pin, 1);
+  // if(table_light)
+  // {
+  //   if (radar || radar_light_controller)
+  //   {
+  //     PCFRelay.write(table_light_pin, 0);
+  //   }
+  //   else
+  //   {
+  //     PCFRelay.write(table_light_pin, 1);
+  //   }
+  // }
+  // else
+  // {
+  //   PCFRelay.write(table_light_pin, 1);
+  // }
+  if (player_status == 1)
+  {
+    PCFRelay.write(speakers_pin, 0);
+  }
+  else
+  {
+    PCFRelay.write(speakers_pin, 1);
   }
   //   /*
   //   keys:
